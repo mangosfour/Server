@@ -1673,6 +1673,12 @@ protected:
     void RemoveOldRoleChecks();
 
 private:
+    /// Complete a boot vote through one state-restoration and record-removal path.
+    /// removeVictim is true for a passed vote or when the target leaves voluntarily;
+    /// notify is false only while the whole group is being disbanded.
+    void FinishBootVote(ObjectGuid groupGuid, Group* pGroup, LFGBoot boot,
+                        bool removeVictim, bool notify);
+
     /// Daily occurences of a player doing X type dungeon
     dailyEntries m_dailyAny;
     dailyEntries m_dailyTBCHeroic;

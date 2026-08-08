@@ -1096,6 +1096,66 @@ void LFGMgr::CancelProposalsFor(ObjectGuid plrGuid)
     }
 }
 
+/// End a boot vote and restore every state it touched before dropping its record.
+void LFGMgr::FinishBootVote(ObjectGuid groupGuid, Group* pGroup, LFGBoot boot,
+                            bool removeVictim, bool notify)
+{
+    LFGStatePolicy::BootTerminalPlan const plan =
+        LFGStatePolicy::ResolveBootTerminal(removeVictim, pGroup != NULL);
+
+    boot.inProgress = false;
+
+    // First clear everyone recorded by the vote. A participant may have left by a
+    // path that did not update the live Group roster; such a player is not a dungeon
+    // survivor and must not keep LFG_STATE_BOOT.
+    for (proposalAnswerMap::const_iterator ans = boot.answers.begin();
+         ans != boot.answers.end(); ++ans)
+    {
+        SetPlayerState(ans->first, LFG_STATE_NONE);
+    }
+    SetPlayerState(boot.playerVotedOn, LFG_STATE_NONE);
+
+    if (plan.restoreGroup)
+    {
+        if (LFGGroupStatus* status = GetGroupStatus(groupGuid))
+        {
+            if (status->state == LFG_STATE_BOOT)
+            {
+                status->state = LFG_STATE_IN_DUNGEON;
+                m_groupStatusMap[groupGuid] = *status;
+            }
+        }
+
+        // MemberSlots includes offline members; GroupReference does not. Restore state
+        // from the persisted roster, then use the live references only for notification.
+        for (Group::MemberSlotList::const_iterator member = pGroup->GetMemberSlots().begin();
+             member != pGroup->GetMemberSlots().end(); ++member)
+        {
+            bool const isVictim = member->guid == boot.playerVotedOn;
+            LFGStatePolicy::BootPlayerState const disposition =
+                isVictim ? plan.victim : plan.survivor;
+            LFGState const state = disposition == LFGStatePolicy::BootPlayerState::None
+                    ? LFG_STATE_NONE : LFG_STATE_IN_DUNGEON;
+            SetPlayerState(member->guid, state);
+        }
+
+        if (notify)
+        {
+            for (GroupReference* ref = pGroup->GetFirstMember(); ref != NULL; ref = ref->next())
+            {
+                if (Player* member = ref->getSource())
+                {
+                    member->GetSession()->SendLfgBootUpdate(boot);
+                }
+            }
+        }
+    }
+
+    // Every terminal path owns this erasure. Keeping it here prevents a completed,
+    // expired, abandoned or disbanded vote from blocking the next one.
+    m_bootStatusMap.erase(groupGuid);
+}
+
 /// Expire boot votes nobody finished answering.
 ///
 /// LFG_TIME_BOOT is 30 seconds, measured across all 14 observed retail boot
@@ -1133,47 +1193,9 @@ void LFGMgr::RemoveOldBoots()
             continue;
         }
 
-        LFGBoot boot = bootIt->second;
-        boot.inProgress = false;
-
-        if (LFGGroupStatus* status = GetGroupStatus(groupGuid))
-        {
-            if (status->state == LFG_STATE_BOOT)
-            {
-                status->state = LFG_STATE_IN_DUNGEON;
-                m_groupStatusMap[groupGuid] = *status;
-            }
-        }
-
-        // Tell everyone the vote lapsed and put their state back, including the
-        // player it was aimed at -- leaving the target in LFG_STATE_BOOT would block
-        // every later vote in the group just as surely as the stale entry did.
-        if (Group* pGroup = sObjectMgr.GetGroupById(groupGuid.GetCounter()))
-        {
-            for (GroupReference* ref = pGroup->GetFirstMember(); ref != NULL; ref = ref->next())
-            {
-                if (Player* pGroupPlr = ref->getSource())
-                {
-                    SetPlayerState(pGroupPlr->GetObjectGuid(), LFG_STATE_IN_DUNGEON);
-                    pGroupPlr->GetSession()->SendLfgBootUpdate(boot);
-                }
-            }
-        }
-        else
-        {
-            // The group went away while the vote was running. Everyone who was polled is
-            // still carrying LFG_STATE_BOOT, and with no group to walk there is nothing
-            // to restore them to a dungeon state -- so clear them outright. Skipping this
-            // is what left players holding a phantom boot state across relog.
-            for (proposalAnswerMap::const_iterator ans = boot.answers.begin();
-                 ans != boot.answers.end(); ++ans)
-            {
-                SetPlayerState(ans->first, LFG_STATE_NONE);
-            }
-            SetPlayerState(boot.playerVotedOn, LFG_STATE_NONE);
-        }
-
-        m_bootStatusMap.erase(groupGuid);
+        LFGBoot const boot = bootIt->second;
+        Group* pGroup = sObjectMgr.GetGroupById(groupGuid.GetCounter());
+        FinishBootVote(groupGuid, pGroup, boot, false, true);
 
         DEBUG_LOG("LFG RemoveOldBoots: vote against %s in group %s expired after %u s; nobody removed",
                   boot.playerVotedOn.GetString().c_str(), groupGuid.GetString().c_str(),
@@ -1898,15 +1920,19 @@ void LFGMgr::OnPlayerLeftLfgGroup(Player* pPlayer, Group* pGroup)
 
     ObjectGuid const plrGuid = pPlayer->GetObjectGuid();
 
-    bootStatusMap::iterator bootIt = m_bootStatusMap.find(pGroup->GetObjectGuid());
+    ObjectGuid const groupGuid = pGroup->GetObjectGuid();
+    bootStatusMap::iterator bootIt = m_bootStatusMap.find(groupGuid);
     if (bootIt != m_bootStatusMap.end())
     {
-        bootIt->second.answers.erase(plrGuid);
-
         // If the leaver WAS the target, the vote has nothing left to decide.
         if (bootIt->second.playerVotedOn == plrGuid)
         {
-            m_bootStatusMap.erase(bootIt);
+            LFGBoot const boot = bootIt->second;
+            FinishBootVote(groupGuid, pGroup, boot, true, true);
+        }
+        else
+        {
+            bootIt->second.answers.erase(plrGuid);
         }
     }
 
@@ -1973,6 +1999,13 @@ void LFGMgr::ReleaseGroupLfgStatus(Group* pGroup)
 
     ObjectGuid const groupGuid = pGroup->GetObjectGuid();
 
+    bootStatusMap::iterator boot = m_bootStatusMap.find(groupGuid);
+    if (boot != m_bootStatusMap.end())
+    {
+        LFGBoot const terminal = boot->second;
+        FinishBootVote(groupGuid, NULL, terminal, false, false);
+    }
+
     // Reset the MEMBERS too, not just the group maps.
     //
     // m_playerStatusMap is keyed by player guid and outlives the group entirely: nothing
@@ -1995,10 +2028,6 @@ void LFGMgr::ReleaseGroupLfgStatus(Group* pGroup)
     {
         SetPlayerState(itr->guid, LFG_STATE_NONE);
     }
-
-    // A vote in flight dies with the group. Leaving it for the reaper is not enough: its
-    // recovery path resolves the group to restore state, and by then there is no group.
-    m_bootStatusMap.erase(groupGuid);
 
     m_groupStatusMap.erase(groupGuid);
     m_groupSet.erase(groupGuid);

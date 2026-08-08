@@ -1926,45 +1926,8 @@ void LFGMgr::CastVote(Player* pPlayer, bool vote)
         return;
     }
 
-    // if we dont have enough votes to kick or keep plr, don't send packet update
-    // if else, set boot.inProgress to false, set plr + group states back to lfg-state-dungeon,
-    // send packet update to group, kick plr if we had the votes, and then erase entry from boot map
-
-    boot.inProgress = false;
-    status->state = LFG_STATE_IN_DUNGEON;
-    m_groupStatusMap[groupGuid] = *status;
-
     bool const passed = yay >= REQUIRED_VOTES_FOR_BOOT;
-
-    for (GroupReference* itr = pGroup->GetFirstMember(); itr != NULL; itr = itr->next())
-    {
-        if (Player* pGroupPlr = itr->getSource())
-        {
-            ObjectGuid plrGuid = pGroupPlr->GetObjectGuid();
-
-            if (plrGuid != boot.playerVotedOn)
-            {
-                SetPlayerState(plrGuid, LFG_STATE_IN_DUNGEON);
-                pGroupPlr->GetSession()->SendLfgBootUpdate(boot);
-            }
-        }
-    }
-
-    // The target is told the outcome too, and their state is restored either way.
-    // Skipping them entirely left a survivor of a failed vote stuck in
-    // LFG_STATE_BOOT for the rest of the run, which blocks the next vote against
-    // anyone and is invisible until someone tries.
-    if (Player* pVictim = sObjectAccessor.FindPlayer(boot.playerVotedOn))
-    {
-        SetPlayerState(boot.playerVotedOn, LFG_STATE_IN_DUNGEON);
-        pVictim->GetSession()->SendLfgBootUpdate(boot);
-    }
-
-    // The vote is over however it went; drop it before acting on the result so a
-    // rejected target can be voted on again later, and so RemoveMember below cannot
-    // re-enter this function against a boot that no longer exists. Nothing erased
-    // this map before, so one vote per group per session was the real behaviour.
-    m_bootStatusMap.erase(groupGuid);
+    FinishBootVote(groupGuid, pGroup, boot, passed, true);
 
     if (passed)
     {

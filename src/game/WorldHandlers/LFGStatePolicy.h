@@ -89,6 +89,30 @@ inline bool CanSubmitRole(bool hasPlayer, bool isRosterMember)
 {
     return hasPlayer && isRosterMember;
 }
+
+enum class BootPlayerState
+{
+    None,
+    InDungeon
+};
+
+struct BootTerminalPlan
+{
+    bool restoreGroup;
+    BootPlayerState survivor;
+    BootPlayerState victim;
+};
+
+inline BootTerminalPlan ResolveBootTerminal(bool removeVictim, bool groupExists)
+{
+    if (!groupExists)
+    {
+        return { false, BootPlayerState::None, BootPlayerState::None };
+    }
+
+    return { true, BootPlayerState::InDungeon,
+             removeVictim ? BootPlayerState::None : BootPlayerState::InDungeon };
+}
 }
 
 #endif

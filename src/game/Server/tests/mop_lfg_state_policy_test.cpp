@@ -95,6 +95,25 @@ static void TestOnlyRosterMembersSubmitRoles()
     CHECK(!LFGStatePolicy::CanSubmitRole(false, true));
 }
 
+static void TestBootTerminalStates()
+{
+    LFGStatePolicy::BootTerminalPlan plan =
+        LFGStatePolicy::ResolveBootTerminal(false, true);
+    CHECK(plan.restoreGroup);
+    CHECK(plan.survivor == LFGStatePolicy::BootPlayerState::InDungeon);
+    CHECK(plan.victim == LFGStatePolicy::BootPlayerState::InDungeon);
+
+    plan = LFGStatePolicy::ResolveBootTerminal(true, true);
+    CHECK(plan.restoreGroup);
+    CHECK(plan.survivor == LFGStatePolicy::BootPlayerState::InDungeon);
+    CHECK(plan.victim == LFGStatePolicy::BootPlayerState::None);
+
+    plan = LFGStatePolicy::ResolveBootTerminal(false, false);
+    CHECK(!plan.restoreGroup);
+    CHECK(plan.survivor == LFGStatePolicy::BootPlayerState::None);
+    CHECK(plan.victim == LFGStatePolicy::BootPlayerState::None);
+}
+
 int main()
 {
     TestDifficultyMustResolveBeforeMutation();
@@ -103,5 +122,6 @@ int main()
     TestProposalRequiresConcreteDestination();
     TestOnlyLeaderMutatesAGroupQueue();
     TestOnlyRosterMembersSubmitRoles();
+    TestBootTerminalStates();
     return g_fail == 0 ? 0 : 1;
 }
