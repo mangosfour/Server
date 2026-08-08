@@ -53,12 +53,18 @@ struct QueueSelectionPlan
     std::set<uint32> candidateDungeons;
 };
 
+inline bool CanMergeQueueSelections(uint32 mainRandomDungeonId,
+                                    uint32 bufferRandomDungeonId)
+{
+    return !mainRandomDungeonId || !bufferRandomDungeonId ||
+           mainRandomDungeonId == bufferRandomDungeonId;
+}
+
 inline QueueSelectionPlan MergeQueueSelection(
     uint32 mainRandomDungeonId, uint32 bufferRandomDungeonId,
     std::set<uint32> const& compatibleDungeons)
 {
-    if (mainRandomDungeonId && bufferRandomDungeonId &&
-        mainRandomDungeonId != bufferRandomDungeonId)
+    if (!CanMergeQueueSelections(mainRandomDungeonId, bufferRandomDungeonId))
     {
         return { false, 0, {}, {} };
     }

@@ -52,6 +52,11 @@ static void TestRandomIdentitySurvivesConcreteMerge()
 {
     std::set<uint32> const concrete = { 6u };
 
+    CHECK(LFGStatePolicy::CanMergeQueueSelections(0, 258));
+    CHECK(LFGStatePolicy::CanMergeQueueSelections(258, 0));
+    CHECK(LFGStatePolicy::CanMergeQueueSelections(258, 258));
+    CHECK(!LFGStatePolicy::CanMergeQueueSelections(258, 999));
+
     LFGStatePolicy::QueueSelectionPlan plan =
         LFGStatePolicy::MergeQueueSelection(0, 258, concrete);
     CHECK(plan.valid);

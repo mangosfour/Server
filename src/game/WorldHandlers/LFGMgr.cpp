@@ -1309,6 +1309,16 @@ void LFGMgr::FindSpecificQueueMatches(ObjectGuid guid)
             LFGPlayers* matchInfo = GetPlayerOrPartyData(*itr);
             if (matchInfo)
             {
+                // Distinct random categories cannot share one reward identity. Reject
+                // that permanent incompatibility before set intersection, role-quota
+                // backtracking or player/team lookup. MergeGroups repeats the guard as
+                // a commit-time invariant.
+                if (!LFGStatePolicy::CanMergeQueueSelections(
+                        queueInfo->randomDungeonID, matchInfo->randomDungeonID))
+                {
+                    continue;
+                }
+
                 // 1. iterate through queueInfo's dungeon set and search the matchInfo for a matching entry.
                 // 2. if an(y) entry is found, great and proceed!
                 // 2a. if an entry is found and the amounts of players-to-roles are compatible, make
