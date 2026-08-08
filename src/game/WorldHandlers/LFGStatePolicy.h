@@ -110,6 +110,15 @@ inline EntranceSource ChooseEntranceSource(bool hasInMapMember,
     return EntranceSource::None;
 }
 
+inline bool CanCompleteProposal(bool allMembersOnline, bool hasDungeon,
+                                bool validDifficulty, bool hasGroupOrLeader,
+                                uint32 finalSize, uint32 capacity)
+{
+    return allMembersOnline && hasDungeon && validDifficulty &&
+           hasGroupOrLeader && finalSize != 0 && capacity != 0 &&
+           finalSize <= capacity;
+}
+
 inline bool CanMutateGroupQueue(bool isGrouped, bool isLeader)
 {
     return !isGrouped || isLeader;

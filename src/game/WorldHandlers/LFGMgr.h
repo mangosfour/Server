@@ -1632,9 +1632,6 @@ protected:
     /// Updates a wait map with the amount of time it took the last player to join
     void UpdateWaitMap(LFGRoles role, uint32 dungeonID, time_t waitTime);
 
-    /// Creates a group so they can enter a dungeon together
-    void CreateDungeonGroup(LFGProposal* proposal);
-
     /// Sends a group to the dungeon assigned to them
     /// Teleport into the dungeon. Passing onlyPlayer restricts the move to that
     /// member while still resolving the destination from the whole group; NULL
@@ -1673,6 +1670,15 @@ protected:
     void RemoveOldRoleChecks();
 
 private:
+    struct DungeonGroupPlan;
+
+    /// Resolve every fallible proposal-completion decision before success packets.
+    bool PrepareDungeonGroup(LFGProposal* proposal, DungeonGroupPlan& plan,
+                             std::set<ObjectGuid>& culprits);
+
+    /// Commit a preflighted group plan; no client-visible refusal remains here.
+    void CreateDungeonGroup(LFGProposal* proposal, DungeonGroupPlan const& plan);
+
     /// Complete a boot vote through one state-restoration and record-removal path.
     /// removeVictim is true for a passed vote or when the target leaves voluntarily;
     /// notify is false only while the whole group is being disbanded.

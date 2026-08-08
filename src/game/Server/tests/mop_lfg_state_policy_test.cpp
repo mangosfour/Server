@@ -95,6 +95,18 @@ static void TestDungeonEntrancePriority()
           EntranceSource::None);
 }
 
+static void TestProposalCompletionRequiresFullPreflight()
+{
+    CHECK(LFGStatePolicy::CanCompleteProposal(true, true, true, true, 5, 5));
+    CHECK(!LFGStatePolicy::CanCompleteProposal(false, true, true, true, 5, 5));
+    CHECK(!LFGStatePolicy::CanCompleteProposal(true, false, true, true, 5, 5));
+    CHECK(!LFGStatePolicy::CanCompleteProposal(true, true, false, true, 5, 5));
+    CHECK(!LFGStatePolicy::CanCompleteProposal(true, true, true, false, 5, 5));
+    CHECK(!LFGStatePolicy::CanCompleteProposal(true, true, true, true, 6, 5));
+    CHECK(!LFGStatePolicy::CanCompleteProposal(true, true, true, true, 0, 5));
+    CHECK(LFGStatePolicy::CanCompleteProposal(true, true, true, true, 25, 40));
+}
+
 static void TestOnlyLeaderMutatesAGroupQueue()
 {
     CHECK(LFGStatePolicy::CanMutateGroupQueue(false, false));
@@ -135,6 +147,7 @@ int main()
     TestRandomIdentitySurvivesConcreteMerge();
     TestProposalRequiresConcreteDestination();
     TestDungeonEntrancePriority();
+    TestProposalCompletionRequiresFullPreflight();
     TestOnlyLeaderMutatesAGroupQueue();
     TestOnlyRosterMembersSubmitRoles();
     TestBootTerminalStates();
