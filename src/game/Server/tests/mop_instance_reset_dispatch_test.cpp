@@ -10,6 +10,7 @@
 #include "Database/DatabaseEnv.h"
 
 #include <cstdio>
+#include <cstring>
 
 // The server process owns these globals. Referencing the real opcode table pulls
 // handler translation units from game.lib, so this standalone fixture supplies
@@ -50,6 +51,13 @@ int main(int /*argc*/, char** /*argv*/)
     CHECK(MopCompactPackets::IsInstanceResetResult(SMSG_INSTANCE_RESET_FAILED));
     CHECK(MopCompactPackets::IsInstanceResetResult(SMSG_RESET_FAILED_NOTIFY));
     CHECK(!MopCompactPackets::IsInstanceResetResult(SMSG_SET_DUNGEON_DIFFICULTY));
+
+    CHECK(std::strcmp(LookupServerOpcodeName(SMSG_INSTANCE_RESET),
+                      "SMSG_INSTANCE_RESET") == 0);
+    CHECK(std::strcmp(LookupServerOpcodeName(SMSG_INSTANCE_RESET_FAILED),
+                      "SMSG_INSTANCE_RESET_FAILED") == 0);
+    CHECK(std::strcmp(LookupServerOpcodeName(SMSG_RESET_FAILED_NOTIFY),
+                      "SMSG_RESET_FAILED_NOTIFY") == 0);
 
     if (g_fail)
     {
