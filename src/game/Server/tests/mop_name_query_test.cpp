@@ -30,12 +30,20 @@
 #include "WorldSession.h"
 #include "Opcodes.h"
 #include "WorldPacket.h"
+#include "Database/DatabaseEnv.h"
 
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
+
+// The server process owns these globals. Initializing the real opcode table
+// pulls handler translation units from game.lib into this standalone fixture.
+DatabaseType WorldDatabase;
+DatabaseType CharacterDatabase;
+DatabaseType LoginDatabase;
+uint32 realmID = 0;
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
@@ -252,6 +260,18 @@ static void test_opcode_values_are_framable()
     CHECK(uint32_t(SMSG_NAME_QUERY_RESPONSE) < uint32_t(OPCODE_TABLE_SIZE));
 }
 
+static void test_request_is_dispatched_during_transfer()
+{
+    InitializeOpcodes();
+    OpcodeHandler const* handler = LookupClientOpcode(CMSG_NAME_QUERY);
+    CHECK(handler != nullptr);
+    if (handler)
+    {
+        CHECK(handler->status == STATUS_LOGGEDIN_OR_TRANSFER);
+        CHECK(handler->handler == &WorldSession::HandleNameQueryOpcode);
+    }
+}
+
 int main(int /*argc*/, char** /*argv*/)
 {
     test_request_fixtures();
@@ -260,6 +280,7 @@ int main(int /*argc*/, char** /*argv*/)
     test_empty_optional_success();
     test_client_string_boundaries();
     test_opcode_values_are_framable();
+    test_request_is_dispatched_during_transfer();
     if (g_fail)
         return 1;
     std::printf("mop_name_query: all checks passed\n");

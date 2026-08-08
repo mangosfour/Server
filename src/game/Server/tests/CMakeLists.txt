@@ -596,6 +596,13 @@ target_include_directories(mop_name_query_test PRIVATE
 set_target_properties(mop_name_query_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_link_libraries(mop_name_query_test PRIVATE game)
 add_test(NAME mop_name_query COMMAND mop_name_query_test)
+if(WIN32)
+    get_filename_component(MOP_NAME_QUERY_MYSQL_RUNTIME_DIR
+        "${MySQL_LIBRARY}" DIRECTORY)
+    set_tests_properties(mop_name_query PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:${MOP_NAME_QUERY_MYSQL_RUNTIME_DIR}${MOP_TEST_LUA_PATH}")
+endif()
 
 add_executable(mop_realmquery_test mop_realmquery_test.cpp)
 target_include_directories(mop_realmquery_test PRIVATE

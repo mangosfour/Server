@@ -926,8 +926,8 @@ void InitializeOpcodes()
     DefS(SMSG_CLEAR_QUEST_COMPLETED_BIT, "SMSG_CLEAR_QUEST_COMPLETED_BIT");
     DefS(SMSG_CLEAR_QUEST_COMPLETED_BITS, "SMSG_CLEAR_QUEST_COMPLETED_BITS");
 
-    // Wave 9 name query request and response.
-    DefC(CMSG_NAME_QUERY, "CMSG_NAME_QUERY", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleNameQueryOpcode);
+    // The client also sends name queries before worldport ACK while its Player is out of world.
+    DefC(CMSG_NAME_QUERY, "CMSG_NAME_QUERY", STATUS_LOGGEDIN_OR_TRANSFER, PROCESS_THREADUNSAFE, &WorldSession::HandleNameQueryOpcode);
     DefS(SMSG_NAME_QUERY_RESPONSE, "SMSG_NAME_QUERY_RESPONSE");
 
     // The /who list. Both bodies were rebuilt for 18414 -- see MopWhoPackets for the
