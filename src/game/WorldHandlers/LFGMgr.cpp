@@ -33,6 +33,7 @@
 #include "GameEventMgr.h"
 #include "Group.h"
 #include "LFGMgr.h"
+#include "LFGStatePolicy.h"
 #include "Object.h"
 #include "Player.h"
 #include "ObjectAccessor.h"
@@ -938,6 +939,14 @@ bool LFGMgr::TryFormGroup(ObjectGuid guid)
         return false;   // no longer complete; stays queued and keeps looking
     }
 
+    // Construct the whole proposal while the entry is still queued. Every refusal in
+    // SendDungeonProposal occurs before player/proposal state or packets change, so a
+    // category with no concrete destination remains an intact queue entry here.
+    if (!SendDungeonProposal(guid, entry))
+    {
+        return false;
+    }
+
     // Out of the MATCH set, but the entry itself stays. Leaving it in m_queueSet would
     // have it matched again next tick and fire a fresh proposal -- and a new
     // SMSG_LFG_PROPOSAL_UPDATE -- every tick forever. Keeping m_playerData is what lets
@@ -945,8 +954,6 @@ bool LFGMgr::TryFormGroup(ObjectGuid guid)
     // ejecting them from the dungeon finder.
     m_queueSet.erase(guid);
     entry->currentState = LFG_STATE_PROPOSAL;
-
-    SendDungeonProposal(guid, entry);
     return true;
 }
 
@@ -1436,29 +1443,22 @@ void LFGMgr::MergeGroups(ObjectGuid guidOne, ObjectGuid guidTwo, std::set<uint32
         return;
     }
 
-    // update the dungeon selection with the compatible ones
-    mainGroup->dungeonList.clear();
-    mainGroup->dungeonList = compatibleDungeons;
-
-    // Narrow the candidates to the same overlap.
-    //
-    // candidateDungeons is what PickConcreteDungeon draws from, and it was left holding
-    // the absorbing entry's full expansion -- so a merged entry could be proposed a
-    // dungeon the newly merged-in player had never asked for and may be locked out of.
-    // Intersecting keeps the pick inside what BOTH sides agreed to.
-    if (!mainGroup->candidateDungeons.empty())
+    // Preserve random request/reward identity independently from the concrete
+    // overlap. Which entry absorbs which must not decide whether the category is
+    // forgotten. Two distinct random categories cannot share one reward identity,
+    // so refuse that merge rather than silently choosing one.
+    LFGStatePolicy::QueueSelectionPlan const selection =
+        LFGStatePolicy::MergeQueueSelection(mainGroup->randomDungeonID,
+                                            bufferGroup->randomDungeonID,
+                                            compatibleDungeons);
+    if (!selection.valid)
     {
-        std::set<uint32> narrowed;
-        for (std::set<uint32>::const_iterator it = compatibleDungeons.begin();
-             it != compatibleDungeons.end(); ++it)
-        {
-            if (mainGroup->candidateDungeons.find(*it) != mainGroup->candidateDungeons.end())
-            {
-                narrowed.insert(*it);
-            }
-        }
-        mainGroup->candidateDungeons = narrowed;
+        return;
     }
+
+    mainGroup->randomDungeonID = selection.randomDungeonId;
+    mainGroup->dungeonList = selection.requestedDungeons;
+    mainGroup->candidateDungeons = selection.candidateDungeons;
 
     // move players / roles into a single roleMap
     for (roleMap::iterator it = bufferGroup->currentRoles.begin(); it != bufferGroup->currentRoles.end(); ++it)

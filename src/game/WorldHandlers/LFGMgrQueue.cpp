@@ -234,26 +234,16 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
                 // because LfgDungeonsEntryfmt was missing its 'n' index marker, so every row read
                 // belonged to a different dungeon.
                 //
-                // With that corrected, this filter removes nothing for any shipped random: each one
-                // expands to a Group_ID whose members are ordinary dungeons carrying raw tier 1 or
-                // 2, both translatable. It is kept as a guard rather than deleted, because the
-                // expansion is driven by DBC content and a future row could carry a tier this core
-                // cannot represent -- but it is a guard, not a load-bearing filter, and it should
-                // not be cited as one.
-                //
-                // What actually stops an untranslatable tier reaching CreateDungeonGroup is the
-                // admission check above. Both the party and solo paths below replace the expanded
-                // set with randomDungeonID alone before the queued LFGPlayers state is built, and
-                // SendDungeonProposal takes *dungeonList.begin() from that, so the proposal always
-                // carries the random row -- which admission has already validated.
-                //
-                // Dropped, not refused: the expansion is a CANDIDATE list, so removing members this
-                // core cannot run leaves random queueing working. No empty-set check follows,
-                // because the admitted random row is itself translatable and always survives.
+                // The category row is identity, not a destination, and is deliberately removed
+                // from the candidate set. This matters for Group_ID 33: category 434 is its only
+                // member, so the result becomes empty and the ordinary no-slots gate below refuses
+                // the join before a queue entry exists.
                 for (std::set<uint32>::iterator it = dungeons.begin(); it != dungeons.end(); )
                 {
                     LfgDungeonsEntry const* candidate = sLfgDungeonsStore.LookupEntry(*it);
-                    if (!candidate || ToInternalDifficulty(candidate->DifficultyID) < 0)
+                    if (!candidate || candidate->ID == randomDungeonID ||
+                        candidate->TypeID == LFG_TYPE_RANDOM_DUNGEON ||
+                        ToInternalDifficulty(candidate->DifficultyID) < 0)
                     {
                         it = dungeons.erase(it);
                     }
@@ -414,6 +404,7 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
 
         LFGPlayers groupInfo(LFG_STATE_NONE, dungeons, roleCheck.currentRoles, comments, false, time(NULL), 0, 0, 0);
         groupInfo.candidateDungeons = candidates;
+        groupInfo.randomDungeonID = randomDungeonID;
         groupInfo.ticketId = AllocateTicketId();
         m_playerData[guid] = groupInfo;
 
@@ -475,6 +466,7 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
 
         LFGPlayers playerInfo(LFG_STATE_QUEUED, dungeons, playerRole, comments, false, time(NULL), 0, 0, 0);
         playerInfo.candidateDungeons = candidates;
+        playerInfo.randomDungeonID = randomDungeonID;
         playerInfo.ticketId = AllocateTicketId();
         m_playerData[guid] = playerInfo;
         BeginTicket(guid, playerInfo.ticketId, uint32(playerInfo.joinedTime));

@@ -264,19 +264,22 @@ static uint32 PickConcreteDungeon(uint32 queuedDungeonId, std::set<uint32> const
 }
 
 //todo: remove from queue, update queue average settings
-void LFGMgr::SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup)
+bool LFGMgr::SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup)
 {
-    ++m_proposalId; // increment number to make a new proposal id
+    if (!lfgGroup || lfgGroup->dungeonList.empty())
+    {
+        return false;
+    }
 
-    std::set<uint32>::iterator dItr = lfgGroup->dungeonList.begin();
+    uint32 const queuedDungeonId = lfgGroup->randomDungeonID
+        ? lfgGroup->randomDungeonID : *lfgGroup->dungeonList.begin();
 
     // note: group create function's parameters are leader guid & leader name
     LFGProposal newProposal;
-    newProposal.id = m_proposalId;
     newProposal.state = LFG_PROPOSAL_INITIATING;
     newProposal.encounters = 0; // todo: check if group has already started a dungeon and are looking for another plr
     newProposal.currentRoles = lfgGroup->currentRoles;
-    newProposal.dungeonID = *dItr;
+    newProposal.dungeonID = queuedDungeonId;
 
     // The dungeon the group is actually put into.
     //
@@ -285,14 +288,14 @@ void LFGMgr::SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup)
     // teleports the group nowhere -- 4 of the 12 silently to Eastern Kingdoms and the other 8 to
     // a plain failure. A concrete member of the expansion is chosen instead, while dungeonID
     // keeps naming the random entry for the proposal packet and the reward lookup.
-    newProposal.concreteDungeonID = PickConcreteDungeon(*dItr, lfgGroup->candidateDungeons);
-    if (!newProposal.concreteDungeonID)
+    newProposal.concreteDungeonID = PickConcreteDungeon(queuedDungeonId, lfgGroup->candidateDungeons);
+    if (!LFGStatePolicy::CanStartProposal(newProposal.concreteDungeonID))
     {
         // Nothing runnable behind the category. Do not build a proposal that cannot complete:
         // the group would be formed, torn out of its previous groups and then left standing.
         sLog.outError("LFG SendDungeonProposal: random dungeon %u expanded to no runnable "
-                      "member; refusing to propose.", *dItr);
-        return;
+                      "member; refusing to propose.", queuedDungeonId);
+        return false;
     }
 
     newProposal.isNew = true;
@@ -333,7 +336,7 @@ void LFGMgr::SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup)
         // the merge, so reaching here means something upstream slipped.
         sLog.outError("LFG SendDungeonProposal: %u live LFG runs in one proposal; refusing. "
                       "The queue entry is left intact.", liveRuns);
-        return;
+        return false;
     }
 
     bool const continuing = !continueGuid.IsEmpty();
@@ -342,7 +345,7 @@ void LFGMgr::SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup)
     {
         sLog.outError("LFG SendDungeonProposal: continuing group %s vanished; refusing.",
                       continueGuid.GetString().c_str());
-        return;
+        return false;
     }
 
     if (continuing)
@@ -364,6 +367,10 @@ void LFGMgr::SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup)
     // isNew drives SendLfgProposalUpdate's `silent` and `inProposedGroup` flags
     // (LFGHandler.cpp:684-685, :708-709), which were dead while this was hardcoded true.
     newProposal.isNew = !continuing;
+
+    // All refusal checks are above this point. Allocate the id only for a
+    // proposal that will be stored and announced.
+    newProposal.id = ++m_proposalId;
 
     // iterate through role map just so get everyone's guid
     for (roleMap::iterator it = lfgGroup->currentRoles.begin(); it != lfgGroup->currentRoles.end(); ++it)
@@ -439,6 +446,7 @@ void LFGMgr::SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup)
 
     // also save the proposal
     m_proposalMap[newProposal.id] = newProposal;
+    return true;
 }
 
 bool LFGMgr::IsLiveLfgRun(Group* pGroup)

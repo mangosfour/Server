@@ -1004,6 +1004,10 @@ struct LFGPlayers //TODO: rename to LFGQueueData
     /// nowhere. The expansion is therefore kept alongside rather than collapsed away.
     std::set<uint32> candidateDungeons;
 
+    /// The random category the entry requested, kept independently from the
+    /// concrete candidates. Zero for an ordinary specific-dungeon selection.
+    uint32 randomDungeonID = 0;
+
     // Zeroed: the default constructor left these indeterminate, and needed* decides both
     // whether an entry is complete and what the queue advertises to the client.
     time_t joinedTime = 0;
@@ -1649,8 +1653,9 @@ protected:
      */
     void MergeGroups(ObjectGuid guidOne, ObjectGuid guidTwo, std::set<uint32> compatibleDungeons);
 
-    /// Send a proposal to each member of a group
-    void SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup);
+    /// Send a proposal to each member of a group. Returns false without mutating
+    /// queue/player/proposal state when no valid proposal can be constructed.
+    bool SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup);
 
     /// Tell a group member that someone else just confirmed their role
     void SendRoleChosen(ObjectGuid plrGuid, ObjectGuid confirmedGuid, uint8 roles);

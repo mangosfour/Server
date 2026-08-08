@@ -9,6 +9,8 @@
 
 #include "Common.h"
 
+#include <set>
+
 namespace LFGStatePolicy
 {
 struct DifficultyPlan
@@ -41,6 +43,41 @@ inline ProposalAnswerDecision InitialProposalAnswer(bool continuingMember)
 {
     return continuingMember ? ProposalAnswerDecision::Agree
                             : ProposalAnswerDecision::Pending;
+}
+
+struct QueueSelectionPlan
+{
+    bool valid;
+    uint32 randomDungeonId;
+    std::set<uint32> requestedDungeons;
+    std::set<uint32> candidateDungeons;
+};
+
+inline QueueSelectionPlan MergeQueueSelection(
+    uint32 mainRandomDungeonId, uint32 bufferRandomDungeonId,
+    std::set<uint32> const& compatibleDungeons)
+{
+    if (mainRandomDungeonId && bufferRandomDungeonId &&
+        mainRandomDungeonId != bufferRandomDungeonId)
+    {
+        return { false, 0, {}, {} };
+    }
+
+    uint32 const randomDungeonId = mainRandomDungeonId
+        ? mainRandomDungeonId : bufferRandomDungeonId;
+
+    std::set<uint32> requested = randomDungeonId
+        ? std::set<uint32>{ randomDungeonId }
+        : compatibleDungeons;
+
+    // A non-random multi-selection is narrowed to the same concrete overlap.
+    // For a random queue this remains separate from the category identity.
+    return { true, randomDungeonId, requested, compatibleDungeons };
+}
+
+inline bool CanStartProposal(uint32 concreteDungeonId)
+{
+    return concreteDungeonId != 0;
 }
 }
 
