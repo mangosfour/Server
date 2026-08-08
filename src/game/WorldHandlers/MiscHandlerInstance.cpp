@@ -92,8 +92,8 @@ void WorldSession::HandleSetDungeonDifficultyOpcode(WorldPacket& recv_data)
     // This read the value and used it as a Difficulty directly, so Normal (raw 1) would
     // have stored HEROIC, Heroic (raw 2) would have stored CHALLENGE, and Challenge
     // (raw 8) would have been rejected outright, since MAX_DUNGEON_DIFFICULTY is 3.
-    // Latent rather than live -- this handler has no DefC registration, so nothing can
-    // reach it -- but wiring it in that state would have silently inverted the setting.
+    // The registered handler must translate before touching saved binds; casting here
+    // would silently invert the setting.
     uint32 clientDifficultyId;
     recv_data >> clientDifficultyId;
 
@@ -151,8 +151,7 @@ void WorldSession::HandleSetRaidDifficultyOpcode(WorldPacket& recv_data)
 {
     DEBUG_LOG("WORLD: Received opcode CMSG_SET_RAID_DIFFICULTY");
 
-    // RAW DifficultyID from the client, as with the dungeon handler above. Also latent:
-    // no DefC registration exists for this opcode either.
+    // RAW DifficultyID from the client, as with the dungeon handler above.
     uint32 clientDifficultyId;
     recv_data >> clientDifficultyId;
 
@@ -203,4 +202,3 @@ void WorldSession::HandleSetRaidDifficultyOpcode(WorldPacket& recv_data)
         _player->SetRaidDifficulty(Difficulty(mode));
     }
 }
-

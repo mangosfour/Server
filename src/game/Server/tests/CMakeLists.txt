@@ -156,6 +156,24 @@ target_compile_definitions(mop_compact_packets_test PRIVATE
 target_link_libraries(mop_compact_packets_test PRIVATE shared)
 add_test(NAME mop_compact_packets COMMAND mop_compact_packets_test)
 
+add_executable(mop_instance_reset_dispatch_test
+    mop_instance_reset_dispatch_test.cpp)
+target_include_directories(mop_instance_reset_dispatch_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_SOURCE_DIR}/src/shared)
+set_target_properties(mop_instance_reset_dispatch_test PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+target_link_libraries(mop_instance_reset_dispatch_test PRIVATE game)
+add_test(NAME mop_instance_reset_dispatch
+    COMMAND mop_instance_reset_dispatch_test)
+if(WIN32)
+    get_filename_component(MOP_INSTANCE_RESET_MYSQL_RUNTIME_DIR
+        "${MySQL_LIBRARY}" DIRECTORY)
+    set_tests_properties(mop_instance_reset_dispatch PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:${MOP_INSTANCE_RESET_MYSQL_RUNTIME_DIR}${MOP_TEST_LUA_PATH}")
+endif()
+
 add_executable(mop_pet_set_action_capability_test
     mop_pet_set_action_capability_test.cpp)
 target_include_directories(mop_pet_set_action_capability_test PRIVATE
@@ -206,6 +224,15 @@ set_target_properties(mop_mail_money_policy_test PROPERTIES
 target_compile_definitions(mop_mail_money_policy_test PRIVATE
     $<TARGET_PROPERTY:game,INTERFACE_COMPILE_DEFINITIONS>)
 add_test(NAME mop_mail_money_policy COMMAND mop_mail_money_policy_test)
+
+add_executable(mop_lfg_state_policy_test mop_lfg_state_policy_test.cpp)
+target_include_directories(mop_lfg_state_policy_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/game/WorldHandlers
+    ${CMAKE_SOURCE_DIR}/src/shared
+    ${CMAKE_SOURCE_DIR}/src/shared/Common)
+set_target_properties(mop_lfg_state_policy_test PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME mop_lfg_state_policy COMMAND mop_lfg_state_policy_test)
 
 add_executable(mop_combat_log_packets_test mop_combat_log_packets_test.cpp)
 target_include_directories(mop_combat_log_packets_test PRIVATE

@@ -34,6 +34,7 @@
 #include "Mail.h"
 #include "Group.h"
 #include "LFGMgr.h"
+#include "LFGStatePolicy.h"
 #include "Object.h"
 #include "Player.h"
 #include "ObjectAccessor.h"
@@ -376,6 +377,7 @@ void LFGMgr::SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup)
             continue;
         }
 
+        bool continuingMember = false;
         if (Group* pGroup = pPlayer->GetGroup())
         {
             ObjectGuid grpGuid = pGroup->GetObjectGuid();
@@ -387,17 +389,7 @@ void LFGMgr::SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup)
             // happened to carry the leader bit, which for a mixed proposal is arbitrary.
             newProposal.groups[plrGuid] = grpGuid;
 
-            // AUTO-ACCEPT the players already in the continuing run.
-            //
-            // This is mandatory, not a courtesy. With isNew = false, SendLfgProposalUpdate
-            // marks their proposal `silent` -- they get NO window to answer it. Leaving
-            // them PENDING would time the proposal out at 45 s every single time and turn
-            // a broken feature into a total one. They are already in the dungeon; they are
-            // not being asked anything.
-            if (continuing && grpGuid == continueGuid)
-            {
-                newProposal.answers[plrGuid] = LFG_ANSWER_AGREE;
-            }
+            continuingMember = continuing && grpGuid == continueGuid;
 
             SendLfgUpdate(plrGuid, GetPlayerStatus(plrGuid), true);
         }
@@ -412,7 +404,14 @@ void LFGMgr::SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup)
             SendLfgUpdate(plrGuid, GetPlayerStatus(plrGuid), false);
         }
 
-        newProposal.answers[plrGuid] = LFG_ANSWER_PENDING;
+        // Assign exactly once. Continuing members receive a silent proposal and
+        // therefore must already agree; newly matched players get the popup and
+        // remain pending until they answer it.
+        newProposal.answers[plrGuid] =
+            LFGStatePolicy::InitialProposalAnswer(continuingMember) ==
+                LFGStatePolicy::ProposalAnswerDecision::Agree
+                    ? LFG_ANSWER_AGREE
+                    : LFG_ANSWER_PENDING;
     }
 
     // Sent only once the proposal is COMPLETE.
@@ -773,7 +772,26 @@ void LFGMgr::CreateDungeonGroup(LFGProposal* proposal)
         return;
     }
 
+    // Resolve the selected tier before detaching anyone from an old group or
+    // creating/persisting a new one. Queue admission should already have rejected
+    // an unsupported tier, but proposals can also be restored or constructed by
+    // server-side paths; those must fail without partial membership mutation.
+    bool const isRaid = dungeon->TypeID == LFG_TYPE_RAID;
+    LFGStatePolicy::DifficultyPlan const difficultyPlan =
+        LFGStatePolicy::ResolveDifficulty(ToInternalDifficulty(dungeon->DifficultyID),
+                                          isRaid,
+                                          uint8(MAX_DUNGEON_DIFFICULTY),
+                                          uint8(MAX_RAID_DIFFICULTY));
+    if (!difficultyPlan.valid)
+    {
+        sLog.outError("LFGMgr::CreateDungeonGroup: dungeon %u has unsupported client "
+                      "DifficultyID %u; refusing before group mutation.",
+                      dungeon->ID, dungeon->DifficultyID);
+        return;
+    }
+
     Group* pGroup = nullptr;
+    bool createdNewGroup = false;
 
     if (proposal->groupRawGuid)
     {
@@ -852,6 +870,19 @@ void LFGMgr::CreateDungeonGroup(LFGProposal* proposal)
             return;
         }
 
+        // Group::Create inherits the leader's manual setting. Replace it before
+        // the group is marked LFG, registered, or given another member, so nobody
+        // observes or persists the wrong Heroic/Normal state.
+        if (difficultyPlan.isRaid)
+        {
+            pGroup->SetRaidDifficulty(Difficulty(difficultyPlan.mode));
+        }
+        else
+        {
+            pGroup->SetDungeonDifficulty(Difficulty(difficultyPlan.mode));
+        }
+        createdNewGroup = true;
+
         pGroup->SetAsLfgGroup();
 
         // A dungeon whose composition exceeds a party must be a RAID before anyone is
@@ -865,6 +896,20 @@ void LFGMgr::CreateDungeonGroup(LFGProposal* proposal)
         }
 
         sObjectMgr.AddGroup(pGroup);
+    }
+
+    if (!createdNewGroup)
+    {
+        // Continuing run: synchronize the run's selected mode before any matched
+        // replacement is added and inherits the group's current difficulty.
+        if (difficultyPlan.isRaid)
+        {
+            pGroup->SetRaidDifficulty(Difficulty(difficultyPlan.mode));
+        }
+        else
+        {
+            pGroup->SetDungeonDifficulty(Difficulty(difficultyPlan.mode));
+        }
     }
 
     // Everyone in the proposal who is not already in this group joins it. That covers
@@ -892,73 +937,6 @@ void LFGMgr::CreateDungeonGroup(LFGProposal* proposal)
                           it->first.GetString().c_str(), pGroup->GetId(),
                           pGroup->GetMembersCount());
         }
-    }
-
-    // `dungeon` is the lookup made at the top of this function, before any group was
-    // created -- it is not re-fetched here.
-    //
-    // LfgDungeons.dbc carries a RAW client DifficultyID. Casting it straight to
-    // Difficulty made LFG normal (id 1) select internal mode 1 -- HEROIC -- and LFG
-    // heroic (id 2) select mode 2, CHALLENGE. That value does not stay in the session:
-    // Group::SetDungeonDifficulty persists it to `groups`.`difficulty` and, through the
-    // members, to `characters`.`dungeon_difficulty`, so a single LFG run left every
-    // member's saved difficulty wrong.
-    int32 const dungeonMode = ToInternalDifficulty(dungeon->DifficultyID);
-
-    // Raids and dungeons keep their difficulty in DIFFERENT fields, and the two setters do not
-    // persist symmetrically:
-    //   SetDungeonDifficulty -> `groups`.`difficulty` and every member's
-    //                           `characters`.`dungeon_difficulty`
-    //   SetRaidDifficulty    -> `groups`.`raiddifficulty` only, plus in-memory
-    //                           Player::m_raidDifficulty
-    //
-    // There is deliberately no `characters`.`raid_difficulty` claim here: that column does not
-    // exist in the schema. The raid tier reaches a character through Player::_LoadGroup at the
-    // next login, not through a column of its own. An earlier revision of this comment asserted
-    // the symmetric pair and was wrong about half of it.
-    //
-    // Sending a raid through the dungeon setter therefore stores the raid tier in the dungeon slot
-    // and leaves the raid slot untouched. 61 of the 343 LfgDungeons rows are TypeID 2, and the
-    // tiers they carry translate to internal 0..3 -- client 3 and 9 to 0, 4 to 1, 5 to 2, 6 to 3.
-    // Internal 3 is 25-player heroic, which no 5-man tier corresponds to, so a group could end up
-    // holding a dungeon difficulty outside the range dungeon difficulties represent.
-    bool const isRaid = (dungeon->TypeID == LFG_TYPE_RAID);
-
-    if (dungeonMode < 0)
-    {
-        // UNREACHABLE from the queue: JoinLFG refuses any slot whose DifficultyID has no internal
-        // mode with ERR_LFG_INVALID_SLOT, and also filters the random-dungeon group expansion, which
-        // otherwise smuggles 20 scenario rows in behind a valid random selection. Together those are
-        // where an unsupported tier is actually rejected.
-        // By the time execution arrives here the group exists and its members have already been
-        // pulled out of their previous groups, so refusing is no longer an option -- all that is
-        // left is to avoid persisting a mode the core cannot read.
-        //
-        // So this is a safety net, not a policy, and it is deliberately loud: if it ever fires, a
-        // proposal reached here by some path that does not go through JoinLFG's admission check, and
-        // the group is about to be teleported into REGULAR_DIFFICULTY of a map it did not queue for.
-        // LFR (7), 5-man challenge (8), scenarios (11, 12) and flexible (14) have no internal
-        // equivalent; 77 of the 343 LfgDungeons rows are one of those, 4 of them raids.
-        sLog.outError("LFGMgr::CreateDungeonGroup: dungeon %u has client DifficultyID %u with no internal mode. "
-                      "JoinLFG should have refused this slot; falling back to regular difficulty.",
-                      dungeon->ID, dungeon->DifficultyID);
-
-        if (isRaid)
-        {
-            pGroup->SetRaidDifficulty(REGULAR_DIFFICULTY);
-        }
-        else
-        {
-            pGroup->SetDungeonDifficulty(REGULAR_DIFFICULTY);
-        }
-    }
-    else if (isRaid)
-    {
-        pGroup->SetRaidDifficulty(Difficulty(dungeonMode));
-    }
-    else
-    {
-        pGroup->SetDungeonDifficulty(Difficulty(dungeonMode));
     }
 
     // Add group to our group set and group map, then teleport to the dungeon.

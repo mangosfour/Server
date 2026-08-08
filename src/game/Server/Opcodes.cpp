@@ -1341,27 +1341,13 @@ void InitializeOpcodes()
     DefC(CMSG_GROUP_INITIATE_ROLE_POLL, "CMSG_GROUP_INITIATE_ROLE_POLL", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGroupInitiateRolePollOpcode);
     DefS(SMSG_GROUP_ROLE_POLL_INFORM, "SMSG_GROUP_ROLE_POLL_INFORM");
 
-    // NOT registered, deliberately: CMSG_SET_DUNGEON_DIFFICULTY 0x1A36 and
-    // CMSG_SET_RAID_DIFFICULTY 0x0591. Both values are binary-proved and both
-    // handlers exist with their reply SMSGs already admitted, so they look ready.
-    // They are not.
-    //
-    // The translation blocker is CLOSED. The client sends a RAW Difficulty.dbc
-    // DifficultyID while the internal Difficulty enum is 0-based, and the handlers
-    // used to cast one onto the other; they now call ToInternalDifficultyChecked,
-    // which converts and rejects an id belonging to the other key space.
-    //
-    // What holds them is a different, still-open gap: both handlers call
-    // ResetInstances(INSTANCE_RESET_CHANGE_DIFFICULTY, ...), so accepting one of
-    // these tears down the player's or group's instance binds. The two packets that
-    // report that outcome -- SMSG_INSTANCE_RESET and SMSG_INSTANCE_RESET_FAILED --
-    // are NOT admitted by WorldSession::IsEnterWorldConverted, so they are built and
-    // dropped. Registering these now would silently destroy binds and tell the
-    // player nothing, whether it succeeded or failed.
-    //
-    // That is the same reason CMSG_RESET_INSTANCES is held below, and it is the
-    // condition to re-check before registering either of these -- NOT "has the
-    // instance-difficulty work landed", which it now has.
+    // The client sends raw Difficulty.dbc ids. The handlers translate those ids
+    // into the core's separate dungeon/raid key spaces before resetting binds.
+    // The complete reset-result family is now recovered and admitted atomically,
+    // so a successful or refused reset is never made invisible by the send gate.
+    DefC(CMSG_SET_DUNGEON_DIFFICULTY, "CMSG_SET_DUNGEON_DIFFICULTY", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleSetDungeonDifficultyOpcode);
+    DefC(CMSG_SET_RAID_DIFFICULTY, "CMSG_SET_RAID_DIFFICULTY", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleSetRaidDifficultyOpcode);
+    DefC(CMSG_RESET_INSTANCES, "CMSG_RESET_INSTANCES", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleResetInstancesOpcode);
 
     // Wave 15 stable-pet list request, list response, and operation result.
     DefC(CMSG_REQUEST_STABLED_PETS, "CMSG_REQUEST_STABLED_PETS", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleListStabledPetsOpcode);
@@ -1464,16 +1450,6 @@ void InitializeOpcodes()
     //                          registered, already admitted and already live via the
     //                          invite path, so it adds no new outbound surface.
     //
-    // CMSG_RESET_INSTANCES is deliberately NOT in this group. It looked like the
-    // cheapest member -- an empty body and a four-byte SMSG_INSTANCE_RESET reply
-    // that retail carries at exactly 4 bytes in all 15 corpus observations -- but
-    // its failure paths reach SMSG_RESET_FAILED_NOTIFY from DungeonMap::Reset and
-    // SMSG_INSTANCE_RESET_FAILED from Group::ResetInstances, neither of which is
-    // registered or admitted. Resetting an occupied instance would silently do
-    // nothing visible, which is the exact no-op this grouping exists to avoid. It
-    // returns once both failure bodies are recovered and admitted; note the current
-    // SMSG_INSTANCE_RESET_FAILED writer emits two uint32 against a four-byte
-    // capacity hint and must not be admitted on trust.
     DefC(CMSG_REQUEST_PET_INFO, "CMSG_REQUEST_PET_INFO", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleRequestPetInfoOpcode);
     DefC(CMSG_LEAVE_BATTLEFIELD, "CMSG_LEAVE_BATTLEFIELD", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleLeaveBattlefieldOpcode);
     DefC(CMSG_COMPLETE_CINEMATIC, "CMSG_COMPLETE_CINEMATIC", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleCompleteCinematic);

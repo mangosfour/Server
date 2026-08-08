@@ -260,6 +260,11 @@ char const* WorldSession::GetPlayerName() const
 // once the after-map flow is fully at parity.
 static bool IsEnterWorldConverted(uint16 opcode)
 {
+    if (MopCompactPackets::IsInstanceResetResult(opcode))
+    {
+        return true;
+    }
+
     switch (opcode)
     {
         // Wave 5 (9ba498698): these after-map send-functions now emit genuine 18414 bodies

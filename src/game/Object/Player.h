@@ -2111,6 +2111,33 @@ namespace MopCompactPackets
     {
         out << uint32(difficulty);
     }
+
+    /// 18414 instance-reset result family.
+    ///
+    /// The client readers consume one map id for success, reason then map id for
+    /// the detailed failure, and no body at all for the generic notification.
+    inline void BuildInstanceResetSuccess(WorldPacket& out, uint32 mapId)
+    {
+        out << uint32(mapId);
+    }
+
+    inline void BuildInstanceResetFailed(WorldPacket& out, uint32 reason, uint32 mapId)
+    {
+        out << uint32(reason);
+        out << uint32(mapId);
+    }
+
+    inline void BuildResetFailedNotify(WorldPacket& out)
+    {
+        (void)out;
+    }
+
+    inline bool IsInstanceResetResult(uint16 opcode)
+    {
+        return opcode == SMSG_INSTANCE_RESET ||
+               opcode == SMSG_INSTANCE_RESET_FAILED ||
+               opcode == SMSG_RESET_FAILED_NOTIFY;
+    }
 }
 
 #include <memory>

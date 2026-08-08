@@ -112,12 +112,13 @@ void Player::SendRaidDifficulty(bool /*IsInGroup*/)
 /**
  * @brief Sends a reset-failed notification for an instance map.
  *
- * @param mapid The map identifier that failed to reset.
+ * @param mapid Retained for the shared reset API; the 18414 generic
+ *              notification has an empty body and does not carry it.
  */
-void Player::SendResetFailedNotify(uint32 mapid)
+void Player::SendResetFailedNotify(uint32 /*mapid*/)
 {
-    WorldPacket data(SMSG_RESET_FAILED_NOTIFY, 4);
-    data << uint32(mapid);
+    WorldPacket data(SMSG_RESET_FAILED_NOTIFY, 0);
+    MopCompactPackets::BuildResetFailedNotify(data);
     GetSession()->SendPacket(&data);
 }
 
@@ -178,7 +179,7 @@ void Player::ResetInstances(InstanceResetMethod method, bool isRaid)
 void Player::SendResetInstanceSuccess(uint32 MapId)
 {
     WorldPacket data(SMSG_INSTANCE_RESET, 4);
-    data << uint32(MapId);
+    MopCompactPackets::BuildInstanceResetSuccess(data, MapId);
     GetSession()->SendPacket(&data);
 }
 
@@ -190,10 +191,8 @@ void Player::SendResetInstanceSuccess(uint32 MapId)
  */
 void Player::SendResetInstanceFailed(uint32 reason, uint32 MapId)
 {
-    // TODO: find what other fail reasons there are besides players in the instance
-    WorldPacket data(SMSG_INSTANCE_RESET_FAILED, 4);
-    data << uint32(reason);
-    data << uint32(MapId);
+    WorldPacket data(SMSG_INSTANCE_RESET_FAILED, 8);
+    MopCompactPackets::BuildInstanceResetFailed(data, reason, MapId);
     GetSession()->SendPacket(&data);
 }
 
