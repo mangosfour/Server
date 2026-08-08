@@ -79,6 +79,16 @@ inline bool CanStartProposal(uint32 concreteDungeonId)
 {
     return concreteDungeonId != 0;
 }
+
+inline bool CanMutateGroupQueue(bool isGrouped, bool isLeader)
+{
+    return !isGrouped || isLeader;
+}
+
+inline bool CanSubmitRole(bool hasPlayer, bool isRosterMember)
+{
+    return hasPlayer && isRosterMember;
+}
 }
 
 #endif

@@ -50,6 +50,11 @@
 // called each time a player selects their role
 void LFGMgr::PerformRoleCheck(Player* pPlayer, Group* pGroup, uint8 roles)
 {
+    if (!pGroup)
+    {
+        return;
+    }
+
     ObjectGuid groupGuid = pGroup->GetObjectGuid();
     ObjectGuid plrGuid = pPlayer ? pPlayer->GetObjectGuid() : ObjectGuid();
 
@@ -64,6 +69,17 @@ void LFGMgr::PerformRoleCheck(Player* pPlayer, Group* pGroup, uint8 roles)
     // was discarded on return -- no member's answer was ever recorded, and a party of
     // two or more could never complete its role check no matter what anyone clicked.
     LFGRoleCheck& roleCheck = it->second;
+
+    roleMap::iterator member = roleCheck.currentRoles.end();
+    if (pPlayer)
+    {
+        member = roleCheck.currentRoles.find(plrGuid);
+        if (!LFGStatePolicy::CanSubmitRole(true, member != roleCheck.currentRoles.end()))
+        {
+            return;
+        }
+    }
+
     bool roleChosen = roleCheck.state != LFG_ROLECHECK_DEFAULT && plrGuid;
 
     if (!plrGuid)
@@ -79,7 +95,7 @@ void LFGMgr::PerformRoleCheck(Player* pPlayer, Group* pGroup, uint8 roles)
     }
     else
     {
-        roleCheck.currentRoles[plrGuid] = roles;
+        member->second = roles;
 
         bool allRolesChosen = true;
         for (roleMap::iterator rItr = roleCheck.currentRoles.begin(); rItr != roleCheck.currentRoles.end(); ++rItr)

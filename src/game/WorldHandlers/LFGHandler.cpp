@@ -44,6 +44,7 @@
 #include "DBCStores.h"
 #include "Group.h"
 #include "LFGMgr.h"
+#include "LFGStatePolicy.h"
 #include "Log.h"
 #include "Player.h"
 #include "WorldPacket.h"
@@ -149,8 +150,21 @@ void WorldSession::HandleLfgJoinOpcode(WorldPacket& recv_data)
     // SMSG_LFG_JOIN_RESULT is now built to the 18414 layout and admitted, so a
     // refused join reaches the player. See MopLfgPackets::BuildJoinResult for the
     // three captures it is pinned to.
+    Player* plr = GetPlayer();
+    if (!plr)
+    {
+        return;
+    }
+
+    Group* pGroup = plr->GetGroup();
+    if (!LFGStatePolicy::CanMutateGroupQueue(
+            pGroup != nullptr, pGroup && pGroup->IsLeader(plr->GetObjectGuid())))
+    {
+        return;
+    }
+
     std::set<uint32> requested(dungeons.begin(), dungeons.end());
-    sLFGMgr.JoinLFG(roles, requested, comment, GetPlayer());
+    sLFGMgr.JoinLFG(roles, requested, comment, plr);
 }
 
 void WorldSession::HandleLfgLeaveOpcode(WorldPacket& recv_data)
@@ -174,16 +188,15 @@ void WorldSession::HandleLfgLeaveOpcode(WorldPacket& recv_data)
         return;
     }
 
-    // A grouped player leaves on behalf of the group, which is how the queue stores it
-    // -- JoinLFG keys group entries by the GROUP guid.
-    //
-    // The test used to be `pGroup && pGroup->IsLeader(...)`, which sent a non-leader
-    // down the SOLO branch. That branch erases m_playerData[playerGuid], and for a
-    // grouped queuer no such entry exists: the party's real entry, keyed by the group
-    // guid, was left in the queue untouched while the client was told it had left.
-    // Whether a non-leader may cancel for the party is a permission question, answered
-    // in LeaveLFG, not a reason to cancel the wrong thing.
+    // A grouped queue is keyed by the group GUID and can only be mutated by its leader.
+    // A non-leader must not be sent down a solo path either: there is no player-keyed
+    // entry to cancel, and reporting success would leave the actual party queue alive.
     Group* pGroup = plr->GetGroup();
+    if (!LFGStatePolicy::CanMutateGroupQueue(
+            pGroup != nullptr, pGroup && pGroup->IsLeader(plr->GetObjectGuid())))
+    {
+        return;
+    }
 
     sLFGMgr.LeaveLFG(plr, pGroup != nullptr);
 }

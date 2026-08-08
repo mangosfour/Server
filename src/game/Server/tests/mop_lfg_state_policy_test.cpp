@@ -81,11 +81,27 @@ static void TestProposalRequiresConcreteDestination()
     CHECK(LFGStatePolicy::CanStartProposal(6));
 }
 
+static void TestOnlyLeaderMutatesAGroupQueue()
+{
+    CHECK(LFGStatePolicy::CanMutateGroupQueue(false, false));
+    CHECK(LFGStatePolicy::CanMutateGroupQueue(true, true));
+    CHECK(!LFGStatePolicy::CanMutateGroupQueue(true, false));
+}
+
+static void TestOnlyRosterMembersSubmitRoles()
+{
+    CHECK(LFGStatePolicy::CanSubmitRole(true, true));
+    CHECK(!LFGStatePolicy::CanSubmitRole(true, false));
+    CHECK(!LFGStatePolicy::CanSubmitRole(false, true));
+}
+
 int main()
 {
     TestDifficultyMustResolveBeforeMutation();
     TestBackfillAnswerIsAssignedOnce();
     TestRandomIdentitySurvivesConcreteMerge();
     TestProposalRequiresConcreteDestination();
+    TestOnlyLeaderMutatesAGroupQueue();
+    TestOnlyRosterMembersSubmitRoles();
     return g_fail == 0 ? 0 : 1;
 }
