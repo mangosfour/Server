@@ -186,10 +186,11 @@ void Player::SendResetInstanceSuccess(uint32 MapId)
 /**
  * @brief Sends an instance reset failure message to the client.
  *
- * @param reason The reset failure reason code.
+ * @param reason The build-18414 reset failure reason code.
  * @param MapId The map identifier that failed to reset.
  */
-void Player::SendResetInstanceFailed(uint32 reason, uint32 MapId)
+void Player::SendResetInstanceFailed(
+    MopCompactPackets::InstanceResetFailureReason reason, uint32 MapId)
 {
     WorldPacket data(SMSG_INSTANCE_RESET_FAILED, 8);
     MopCompactPackets::BuildInstanceResetFailed(data, reason, MapId);

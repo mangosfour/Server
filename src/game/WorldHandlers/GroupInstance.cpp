@@ -368,7 +368,9 @@ void Group::ResetInstances(InstanceResetMethod method, bool isRaid, Player* Send
 
         bool isEmpty = true;
         // check if there are offline members on the map
-        if (method != INSTANCE_RESET_GROUP_DISBAND && mapsWithOfflinePlayer.find(state->GetMapId()) != mapsWithOfflinePlayer.end())
+        bool const hasOfflinePlayer = method != INSTANCE_RESET_GROUP_DISBAND &&
+            mapsWithOfflinePlayer.find(state->GetMapId()) != mapsWithOfflinePlayer.end();
+        if (hasOfflinePlayer)
         {
             isEmpty = false;
         }
@@ -388,7 +390,12 @@ void Group::ResetInstances(InstanceResetMethod method, bool isRaid, Player* Send
             }
             else
             {
-                SendMsgTo->SendResetInstanceFailed(0, state->GetMapId());
+                // The client distinguishes a member who is offline from a member
+                // physically inside the loaded instance. Legacy reason 0 means
+                // ZONING in build 18414 and described neither failure correctly.
+                SendMsgTo->SendResetInstanceFailed(
+                    MopCompactPackets::SelectInstanceResetFailureReason(hasOfflinePlayer),
+                    state->GetMapId());
             }
         }
 

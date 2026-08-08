@@ -2114,14 +2114,34 @@ namespace MopCompactPackets
 
     /// 18414 instance-reset result family.
     ///
-    /// The client readers consume one map id for success, reason then map id for
-    /// the detailed failure, and no body at all for the generic notification.
+    /// The 32-bit build-18414 client consumer at 0xCE0BFB reads the success map
+    /// id from the first dword at +0x10. Its detailed-failure peer at 0xCE0CB2
+    /// reads a reason dword at +0x10 and a map-id dword at +0x14, while the
+    /// generic-notify consumer at 0xCE0D9B reads no body fields. The failure
+    /// consumer maps reason 0 to ZONING, 2 to PLAYERS_INSIDE and 3 to
+    /// PLAYERS_OFFLINE; value 1 produces no chat message.
+    enum InstanceResetFailureReason : uint32
+    {
+        INSTANCE_RESET_FAILURE_ZONING         = 0,
+        INSTANCE_RESET_FAILURE_PLAYERS_INSIDE = 2,
+        INSTANCE_RESET_FAILURE_PLAYERS_OFFLINE = 3
+    };
+
+    inline InstanceResetFailureReason SelectInstanceResetFailureReason(
+        bool hasOfflinePlayer)
+    {
+        return hasOfflinePlayer ? INSTANCE_RESET_FAILURE_PLAYERS_OFFLINE
+                                : INSTANCE_RESET_FAILURE_PLAYERS_INSIDE;
+    }
+
     inline void BuildInstanceResetSuccess(WorldPacket& out, uint32 mapId)
     {
         out << uint32(mapId);
     }
 
-    inline void BuildInstanceResetFailed(WorldPacket& out, uint32 reason, uint32 mapId)
+    inline void BuildInstanceResetFailed(WorldPacket& out,
+                                         InstanceResetFailureReason reason,
+                                         uint32 mapId)
     {
         out << uint32(reason);
         out << uint32(mapId);
@@ -5148,7 +5168,8 @@ class Player : public Unit
         void SendResetInstanceSuccess(uint32 MapId);
 
         // Send reset instance failed
-        void SendResetInstanceFailed(uint32 reason, uint32 MapId);
+        void SendResetInstanceFailed(
+            MopCompactPackets::InstanceResetFailureReason reason, uint32 MapId);
 
         // Send reset failed notification
         void SendResetFailedNotify(uint32 mapid);
