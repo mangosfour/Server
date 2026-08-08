@@ -321,8 +321,8 @@ bool LFGMgr::SendDungeonProposal(ObjectGuid queueGuid, LFGPlayers* lfgGroup)
     {
         // Nothing runnable behind the category. Do not build a proposal that cannot complete:
         // the group would be formed, torn out of its previous groups and then left standing.
-        sLog.outError("LFG SendDungeonProposal: random dungeon %u expanded to no runnable "
-                      "member; refusing to propose.", queuedDungeonId);
+        DEBUG_LOG("LFG SendDungeonProposal: random dungeon %u expanded to no runnable "
+                  "member; refusing to propose.", queuedDungeonId);
         return false;
     }
 

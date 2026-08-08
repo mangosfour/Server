@@ -83,6 +83,7 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
     // listed them -- two queue entries for one player, and potentially two proposals.
     ObjectGuid const existingEntryGuid = pGroup ? guid : FindQueueEntryContaining(guid);
     LFGPlayers* currentInfo = existingEntryGuid ? GetPlayerOrPartyData(existingEntryGuid) : nullptr;
+    bool replaceQueuedEntry = false;
 
     // check if we actually have info on the player/group right now
     if (currentInfo)
@@ -92,10 +93,10 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
         // are they already queued?
         if (currentInfo->currentState == LFG_STATE_QUEUED)
         {
-            // Take them out of whatever they are in now so they can join this instead.
-            // RemovePlayerFromQueue rather than a bare m_queueSet.erase, because the
-            // entry may be shared with other players who must stay queued.
-            RemovePlayerFromQueue(guid);
+            // Keep the old entry until the replacement selection passes every join gate.
+            // Treat it as absent for the remaining current-state checks, then remove the
+            // player immediately before creating the replacement entry below.
+            replaceQueuedEntry = true;
             currentInfo = nullptr;
         }
 
@@ -237,7 +238,7 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
                 // The category row is identity, not a destination, and is deliberately removed
                 // from the candidate set. This matters for Group_ID 33: category 434 is its only
                 // member, so the result becomes empty and the ordinary no-slots gate below refuses
-                // the join before a queue entry exists.
+                // the replacement while leaving any existing queue entry intact.
                 for (std::set<uint32>::iterator it = dungeons.begin(); it != dungeons.end(); )
                 {
                     LfgDungeonsEntry const* candidate = sLfgDungeonsStore.LookupEntry(*it);
@@ -341,6 +342,13 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
     {
         plr->GetSession()->SendLfgJoinResult(result, LFG_JOIN_DETAIL_NONE, partyLockedDungeons);
         return;
+    }
+
+    if (replaceQueuedEntry)
+    {
+        // RemovePlayerFromQueue rather than a bare m_queueSet.erase, because the
+        // entry may be shared with other players who must stay queued.
+        RemovePlayerFromQueue(guid);
     }
 
     if (pGroup)

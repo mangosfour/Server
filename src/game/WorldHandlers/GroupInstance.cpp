@@ -399,8 +399,9 @@ void Group::ResetInstances(InstanceResetMethod method, bool isRaid, Player* Send
             }
         }
 
-        // TODO - Adapt here when clear how difficulty changes must be handled
-        if (isEmpty || method == INSTANCE_RESET_GROUP_DISBAND || method == INSTANCE_RESET_CHANGE_DIFFICULTY)
+        // A failed difficulty reset must keep its bind: the failure packet says the
+        // instance was not reset, and removing the bind would contradict that outcome.
+        if (isEmpty || method == INSTANCE_RESET_GROUP_DISBAND)
         {
             // do not reset the instance, just unbind if others are permanently bound to it
             if (state->CanReset())
