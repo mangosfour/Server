@@ -72,6 +72,83 @@
 
 #include <limits>
 
+void ObjectMgr::LoadDungeonFinderEntrances()
+{
+    uint32 count = 0;
+    mDungeonFinderEntranceMap.clear();
+
+    QueryResult* result = WorldDatabase.Query(
+        "SELECT `dungeon_id`, `target_map`, `target_position_x`, "
+        "`target_position_y`, `target_position_z`, `target_orientation` "
+        "FROM `dungeonfinder_entrance`");
+
+    if (!result)
+    {
+        BarGoLink bar(1);
+        bar.step();
+
+        sLog.outString();
+        sLog.outErrorDb(">> Loaded 0 Dungeon Finder entrances. "
+                        "DB table `dungeonfinder_entrance` is empty!");
+        return;
+    }
+
+    BarGoLink bar(result->GetRowCount());
+
+    do
+    {
+        Field* fields = result->Fetch();
+        bar.step();
+
+        uint32 const dungeonId = fields[0].GetUInt32();
+        uint32 const targetMap = fields[1].GetUInt32();
+        float const x = fields[2].GetFloat();
+        float const y = fields[3].GetFloat();
+        float const z = fields[4].GetFloat();
+        float const orientation = fields[5].GetFloat();
+
+        LfgDungeonsEntry const* dungeon = sLfgDungeonsStore.LookupEntry(dungeonId);
+        if (!dungeon)
+        {
+            sLog.outErrorDb("Table `dungeonfinder_entrance` has unknown "
+                            "LfgDungeons entry %u; skipping row.", dungeonId);
+            continue;
+        }
+
+        if (uint32(dungeon->MapID) != targetMap)
+        {
+            sLog.outErrorDb("Table `dungeonfinder_entrance` maps dungeon %u to "
+                            "map %u, but LfgDungeons.dbc requires map %d; skipping row.",
+                            dungeonId, targetMap, dungeon->MapID);
+            continue;
+        }
+
+        if (!MapManager::IsValidMapCoord(targetMap, x, y, z, orientation) ||
+            (x == 0.0f && y == 0.0f && z == 0.0f))
+        {
+            sLog.outErrorDb("Table `dungeonfinder_entrance` has unusable "
+                            "coordinates for dungeon %u on map %u; skipping row.",
+                            dungeonId, targetMap);
+            continue;
+        }
+
+        DungeonFinderEntrance entrance;
+        entrance.targetMap = targetMap;
+        entrance.x = x;
+        entrance.y = y;
+        entrance.z = z;
+        entrance.orientation = orientation;
+        mDungeonFinderEntranceMap[dungeonId] = entrance;
+        ++count;
+    }
+    while (result->NextRow());
+
+    delete result;
+
+    sLog.outString();
+    sLog.outString(">> Loaded %u Dungeon Finder entrances", count);
+}
+
 void ObjectMgr::LoadDungeonFinderRequirements()
 {
     uint32 count = 0;

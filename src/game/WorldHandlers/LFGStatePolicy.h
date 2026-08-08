@@ -80,6 +80,36 @@ inline bool CanStartProposal(uint32 concreteDungeonId)
     return concreteDungeonId != 0;
 }
 
+enum class EntranceSource : uint8
+{
+    None,
+    InMapMember,
+    LfgOnly,
+    Physical
+};
+
+inline EntranceSource ChooseEntranceSource(bool hasInMapMember,
+                                           bool hasLfgEntrance,
+                                           bool hasPhysicalEntrance)
+{
+    if (hasInMapMember)
+    {
+        return EntranceSource::InMapMember;
+    }
+
+    if (hasLfgEntrance)
+    {
+        return EntranceSource::LfgOnly;
+    }
+
+    if (hasPhysicalEntrance)
+    {
+        return EntranceSource::Physical;
+    }
+
+    return EntranceSource::None;
+}
+
 inline bool CanMutateGroupQueue(bool isGrouped, bool isLeader)
 {
     return !isGrouped || isLeader;

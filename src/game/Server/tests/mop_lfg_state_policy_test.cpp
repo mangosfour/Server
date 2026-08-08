@@ -81,6 +81,20 @@ static void TestProposalRequiresConcreteDestination()
     CHECK(LFGStatePolicy::CanStartProposal(6));
 }
 
+static void TestDungeonEntrancePriority()
+{
+    using LFGStatePolicy::EntranceSource;
+
+    CHECK(LFGStatePolicy::ChooseEntranceSource(true, true, true) ==
+          EntranceSource::InMapMember);
+    CHECK(LFGStatePolicy::ChooseEntranceSource(false, true, true) ==
+          EntranceSource::LfgOnly);
+    CHECK(LFGStatePolicy::ChooseEntranceSource(false, false, true) ==
+          EntranceSource::Physical);
+    CHECK(LFGStatePolicy::ChooseEntranceSource(false, false, false) ==
+          EntranceSource::None);
+}
+
 static void TestOnlyLeaderMutatesAGroupQueue()
 {
     CHECK(LFGStatePolicy::CanMutateGroupQueue(false, false));
@@ -120,6 +134,7 @@ int main()
     TestBackfillAnswerIsAssignedOnce();
     TestRandomIdentitySurvivesConcreteMerge();
     TestProposalRequiresConcreteDestination();
+    TestDungeonEntrancePriority();
     TestOnlyLeaderMutatesAGroupQueue();
     TestOnlyRosterMembersSubmitRoles();
     TestBootTerminalStates();

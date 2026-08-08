@@ -646,6 +646,9 @@ void World::SetInitialWorldSettings()
     sLog.outString("Loading GM tickets...");
     sTicketMgr.LoadGMTickets();
 
+    sLog.outString("Loading Dungeon Finder Entrances...");
+    sObjectMgr.LoadDungeonFinderEntrances();
+
     sLog.outString("Loading Dungeon Finder Requirements...");
     sObjectMgr.LoadDungeonFinderRequirements();
 

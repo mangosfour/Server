@@ -1090,29 +1090,37 @@ void LFGMgr::TeleportToDungeon(uint32 dungeonID, Group* pGroup, Player* onlyPlay
         }
     }
 
-    if (teleportTo)
+    DungeonFinderEntrance const* lfgEntrance =
+        sObjectMgr.GetDungeonFinderEntrance(dungeonID);
+    AreaTrigger const* physicalEntrance = sObjectMgr.GetMapEntranceTrigger(mapID);
+
+    switch (LFGStatePolicy::ChooseEntranceSource(
+        teleportTo != NULL, lfgEntrance != NULL, physicalEntrance != NULL))
     {
-        x = teleportTo->GetPositionX();
-        y = teleportTo->GetPositionY();
-        z = teleportTo->GetPositionZ();
-        o = teleportTo->GetOrientation();
-    }
-    else
-    {
-        if (AreaTrigger const* at = sObjectMgr.GetMapEntranceTrigger(mapID))
-        {
-            x = at->target_X;
-            y = at->target_Y;
-            z = at->target_Z;
-            o = at->target_Orientation;
-        }
-        else
-        {
-            sLog.outError("LFG TeleportToDungeon: no map entrance trigger for map %u "
-                          "(dungeon %u) -- areatrigger_teleport has no row targeting it",
-                          mapID, dungeonID);
+        case LFGStatePolicy::EntranceSource::InMapMember:
+            x = teleportTo->GetPositionX();
+            y = teleportTo->GetPositionY();
+            z = teleportTo->GetPositionZ();
+            o = teleportTo->GetOrientation();
+            break;
+        case LFGStatePolicy::EntranceSource::LfgOnly:
+            x = lfgEntrance->x;
+            y = lfgEntrance->y;
+            z = lfgEntrance->z;
+            o = lfgEntrance->orientation;
+            break;
+        case LFGStatePolicy::EntranceSource::Physical:
+            x = physicalEntrance->target_X;
+            y = physicalEntrance->target_Y;
+            z = physicalEntrance->target_Z;
+            o = physicalEntrance->target_Orientation;
+            break;
+        case LFGStatePolicy::EntranceSource::None:
+            sLog.outError("LFG TeleportToDungeon: no LFG-only entrance for dungeon %u "
+                          "and no physical entrance targeting map %u",
+                          dungeonID, mapID);
             err = LFG_TELEPORTERROR_INVALID_LOCATION;
-        }
+            break;
     }
 
     dungeonForbidden lockedDungeons;

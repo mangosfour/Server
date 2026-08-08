@@ -415,6 +415,15 @@ struct DungeonFinderRequirements
         hordeQuestId(HordeQuestId), achievement(Achievement), questIncompleteText(QuestIncompleteText) {}
 };
 
+struct DungeonFinderEntrance
+{
+    uint32 targetMap = 0;
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float orientation = 0.0f;
+};
+
 struct DungeonFinderRewards
 {
     uint32 baseXPReward;
@@ -439,6 +448,7 @@ struct DungeonFinderItems
 };
 
 typedef std::unordered_map<uint32, DungeonFinderRequirements> DungeonFinderRequirementsMap;
+typedef std::unordered_map<uint32, DungeonFinderEntrance> DungeonFinderEntranceMap;
 typedef std::unordered_map<uint32, DungeonFinderRewards> DungeonFinderRewardsMap;
 typedef std::unordered_map<uint32, DungeonFinderItems> DungeonFinderItemsMap;
 
@@ -804,6 +814,16 @@ class ObjectMgr
             return NULL;
         }
 
+        DungeonFinderEntrance const* GetDungeonFinderEntrance(uint32 dungeonId) const
+        {
+            DungeonFinderEntranceMap::const_iterator itr = mDungeonFinderEntranceMap.find(dungeonId);
+            if (itr != mDungeonFinderEntranceMap.end())
+            {
+                return &itr->second;
+            }
+            return NULL;
+        }
+
         DungeonFinderRewards const* GetDungeonFinderRewards(uint32 level) const
         {
             DungeonFinderRewardsMap::const_iterator itr = mDungeonFinderRewardsMap.find(level);
@@ -905,6 +925,7 @@ class ObjectMgr
         void LoadPointsOfInterest();
         void LoadQuestPOI();
 
+        void LoadDungeonFinderEntrances();
         void LoadDungeonFinderRequirements();
         void LoadDungeonFinderRewards();
         void LoadDungeonFinderItems();
@@ -1532,6 +1553,7 @@ class ObjectMgr
 
         QuestPOIMap         mQuestPOIMap;
 
+        DungeonFinderEntranceMap mDungeonFinderEntranceMap;
         DungeonFinderRequirementsMap mDungeonFinderRequirementsMap;
         DungeonFinderRewardsMap mDungeonFinderRewardsMap;
         DungeonFinderItemsMap mDungeonFinderItemsMap;
