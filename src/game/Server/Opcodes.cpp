@@ -837,11 +837,14 @@ void InitializeOpcodes()
     DefS(SMSG_RAID_INSTANCE_INFO, "SMSG_RAID_INSTANCE_INFO");
 
     // Wave 6 creature query request and response.
-    DefC(CMSG_CREATURE_QUERY, "CMSG_CREATURE_QUERY", STATUS_LOGGEDIN, PROCESS_INPLACE, &WorldSession::HandleCreatureQueryOpcode);
+    // Sent for every creature the client sees on zone-in, which begins before
+    // worldport ACK while the Player is still out of world. Static template read.
+    DefC(CMSG_CREATURE_QUERY, "CMSG_CREATURE_QUERY", STATUS_LOGGEDIN_OR_TRANSFER, PROCESS_INPLACE, &WorldSession::HandleCreatureQueryOpcode);
     DefS(SMSG_CREATURE_QUERY_RESPONSE, "SMSG_CREATURE_QUERY_RESPONSE");
 
     // Wave 8 game-object query request and response.
-    DefC(CMSG_GAMEOBJECT_QUERY, "CMSG_GAMEOBJECT_QUERY", STATUS_LOGGEDIN, PROCESS_INPLACE, &WorldSession::HandleGameObjectQueryOpcode);
+    // Same zone-in burst as CMSG_CREATURE_QUERY. Static template read.
+    DefC(CMSG_GAMEOBJECT_QUERY, "CMSG_GAMEOBJECT_QUERY", STATUS_LOGGEDIN_OR_TRANSFER, PROCESS_INPLACE, &WorldSession::HandleGameObjectQueryOpcode);
     DefS(SMSG_GAMEOBJECT_QUERY_RESPONSE, "SMSG_GAMEOBJECT_QUERY_RESPONSE");
 
     // The GameObject page packet triggers this shared item/GameObject cache
@@ -943,11 +946,14 @@ void InitializeOpcodes()
     // client parks the queried name and never commits it (the name shows "Unknown").
     // CMSG value client-confirmed live (0x1A16, body = uint32 realmId); response
     // contract RE-verified against the client handler sub_1403073A0.
-    DefC(CMSG_REALM_NAME_QUERY, "CMSG_REALM_NAME_QUERY", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleRealmNameQueryOpcode);
+    // Fired from the name-cache path, which runs during the transfer window. Reads
+    // only the cached realm name.
+    DefC(CMSG_REALM_NAME_QUERY, "CMSG_REALM_NAME_QUERY", STATUS_LOGGEDIN_OR_TRANSFER, PROCESS_THREADUNSAFE, &WorldSession::HandleRealmNameQueryOpcode);
     DefS(SMSG_REALM_NAME_QUERY_RESPONSE, "SMSG_REALM_NAME_QUERY_RESPONSE");
 
     // Wave 7 compact time query requests and responses.
-    DefC(CMSG_QUERY_TIME, "CMSG_QUERY_TIME", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleQueryTimeOpcode);
+    // Sends server time and the daily reset countdown; touches no player state.
+    DefC(CMSG_QUERY_TIME, "CMSG_QUERY_TIME", STATUS_LOGGEDIN_OR_TRANSFER, PROCESS_THREADUNSAFE, &WorldSession::HandleQueryTimeOpcode);
     DefS(SMSG_QUERY_TIME_RESPONSE, "SMSG_QUERY_TIME_RESPONSE");
     DefC(CMSG_PLAYED_TIME, "CMSG_PLAYED_TIME", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandlePlayedTime);
     DefS(SMSG_PLAYED_TIME, "SMSG_PLAYED_TIME");
