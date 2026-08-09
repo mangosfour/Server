@@ -69,6 +69,7 @@ source_group("DataStores" FILES ${SRC_GRP_DATASTORE})
 set(SRC_GRP_DATABASE
   Database/Database.cpp
   Database/Database.h
+  Database/DatabaseVersion.h
   Database/DatabaseEnv.h
   Database/DatabaseImpl.h
   Database/DatabaseMysql.cpp

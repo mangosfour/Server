@@ -25,6 +25,7 @@
 
 #include "DatabaseEnv.h"
 #include "Config/Config.h"
+#include "Database/DatabaseVersion.h"
 #include "Database/SqlOperations.h"
 #include "GitRevision.h"
 
@@ -620,7 +621,18 @@ bool Database::CheckDatabaseVersion(DatabaseTypes database)
     //  CHAR_DB_CONTENT_NR
     //  REALMD_DB_CONTENT_NR
     // for more information.
-    if (current_db_content < core_db_requirements.minimal_expected_content)
+    DatabaseVersion::ContentComparison const contentComparison =
+        DatabaseVersion::CompareContent(current_db_content, core_db_requirements.minimal_expected_content);
+    if (contentComparison == DatabaseVersion::ContentComparison::Invalid)
+    {
+        sLog.outErrorDb("The [%s] database content version cannot be compared because both values must be non-empty decimal numbers.",
+            core_db_requirements.dbname.c_str());
+        sLog.outErrorDb("Current DB content is '%s', core expects '%s'",
+            current_db_content.c_str(), core_db_requirements.minimal_expected_content.c_str());
+        sLog.outErrorDb("Database startup will continue because content version mismatches are non-fatal.");
+        db_vs_core_content_version_mismatch = true;
+    }
+    else if (contentComparison == DatabaseVersion::ContentComparison::Older)
     {
         // TODO : Should not display with error color but warning (e.g YELLOW) => Create a sLog.outWarningDb() and sLog.outWarning()
         sLog.outErrorDb("You have not updated the core for few DB [%s] updates!", core_db_requirements.dbname.c_str());
