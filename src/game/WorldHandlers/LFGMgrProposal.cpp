@@ -153,11 +153,8 @@ void LFGMgr::PerformRoleCheck(Player* pPlayer, Group* pGroup, uint8 roles)
             case LFG_ROLECHECK_INITIALITING:
                 continue;
             case LFG_ROLECHECK_FINISHED:
-                // set current plr's state to queued. then set their role in that struct
-                // then send lfgupdate packet with UPDATETYPE_ADDED_TO_QUEUE
-                SetPlayerState(guidBuff, LFG_STATE_QUEUED);
-                SetPlayerUpdateType(guidBuff, LFG_UPDATE_ADDED_TO_QUEUE);
-                SendLfgUpdate(guidBuff, GetPlayerStatus(guidBuff), true);
+                // The completion burst is sent below, after the live queue entry has
+                // the final roles that all three status bodies must describe.
                 break;
             default:
                 if (roleCheck.leaderGuidRaw == guidBuff.GetRawValue())
@@ -185,11 +182,33 @@ void LFGMgr::PerformRoleCheck(Player* pPlayer, Group* pGroup, uint8 roles)
 
         m_playerData[groupGuid] = *queueInfo;
 
-        // Retail sends the successful join result to the leader after the role check
-        // completes. BeginTicket ran before the opening status, so this quotes the same
-        // retained group requester, id and time as every other body for the queue.
+        // Retail group completion (capture-000075 seq 891751-891754): reason 24
+        // queued=false, reason 13 queued=true, leader-only JOIN_RESULT, then the same
+        // reason-13 body again. Every member gets the status bodies; capture-000499
+        // seq 898014-898016 shows the 24/13/13 sequence without a join result.
+        for (roleMap::const_iterator itr = roleCheck.currentRoles.begin(); itr != roleCheck.currentRoles.end(); ++itr)
+        {
+            ObjectGuid guidBuff = itr->first;
+
+            // JoinLFG staged the reason-24 ROLECHECK status for this completion point.
+            SendLfgUpdate(guidBuff, GetPlayerStatus(guidBuff), true);
+
+            SetPlayerState(guidBuff, LFG_STATE_QUEUED);
+            SetPlayerUpdateType(guidBuff, LFG_UPDATE_ADDED_TO_QUEUE);
+            SendLfgUpdate(guidBuff, GetPlayerStatus(guidBuff), true);
+        }
+
+        // BeginTicket ran before the role check, so this quotes the same retained group
+        // requester, id and time as the two status bodies immediately before it.
         SendLfgJoinResult(ObjectGuid(roleCheck.leaderGuidRaw), ERR_LFG_OK,
                           LFG_JOIN_DETAIL_NONE, nullForbidden);
+
+        // Each member's queued status, the shared queue data and retained identity are
+        // unchanged since its first reason-13 send, so this is the byte-identical repeat.
+        for (roleMap::const_iterator itr = roleCheck.currentRoles.begin(); itr != roleCheck.currentRoles.end(); ++itr)
+        {
+            SendLfgUpdate(itr->first, GetPlayerStatus(itr->first), true);
+        }
 
         AddToQueue(groupGuid);
 

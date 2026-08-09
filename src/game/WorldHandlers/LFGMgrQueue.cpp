@@ -482,16 +482,11 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
         {
             if (Player* pGroupPlr = itr->getSource())
             {
-                // ROLECHECK, not NONE -- the update used to announce the join while
-                // reporting the state as NONE, correcting it only for the stored copy.
-                //
-                // Reason 24, not 6: 6 is retail's re-queue-from-inside-a-dungeon reason
-                // (257 of 276 observed joins open with 24 and none with 6), and BOTH 6 and
-                // 13 make the client display ERR_LFG_JOINED_QUEUE.
+                // Stage the reason-24 opener, but do not send it during the role check.
+                // Retail answers the leader's CMSG_LFG_JOIN with the role-check update;
+                // only when every role is accepted does PerformRoleCheck emit the
+                // 24, 13, JOIN_RESULT, 13 completion burst.
                 LFGPlayerStatus overallStatus(LFG_STATE_ROLECHECK, LFG_UPDATE_JOIN_QUEUE_INITIAL, dungeons, comments);
-
-                pGroupPlr->GetSession()->SendLfgUpdate(true, overallStatus);
-
                 m_playerStatusMap[pGroupPlr->GetObjectGuid()] = overallStatus;
             }
         }
