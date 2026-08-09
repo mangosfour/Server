@@ -1573,11 +1573,38 @@ void LFGMgr::SendQueueStatusFor(ObjectGuid queueGuid, time_t timeNow)
             // missing. The absorbing player saw none of this, because for them
             // the merged key IS their own guid.
             //
-            // Mirrors SendLfgUpdate: a party member's queue is keyed by the
-            // group guid, everyone else by their own.
+            // Mirrors SendLfgUpdate, which files bodies under the RETAINED identity
+            // rather than current grouping. Deriving it here from the player's group
+            // instead would diverge the moment either changes: a member announced under
+            // a group who has since left it would be sent a status keyed to themselves
+            // while their update bodies still arrive keyed to the group, and the client
+            // -- tracking one record -- would drop the status and blank the eye's
+            // tooltip for the rest of the queue.
+            //
+            // All THREE identity fields come from the retained record, not just the
+            // requester. This body's key is queueGuid + clientQueueId + joinTime, which
+            // SendLfgQueueStatus fills from queueGuid, ticketId and joinTime -- so taking
+            // any one of them from the live entry tears the identity just as surely.
+            //
+            // joinTime is the one that bites without any merge at all: PerformRoleCheck
+            // overwrites the entry's joinedTime when the check completes, so a group whose
+            // role check took a few seconds would be told a start time its client never
+            // recorded. A merge does the same to an absorbed member by handing them the
+            // absorbing entry's start.
             ObjectGuid memberQueueGuid = rItr->first;
-            if (Group* pGroup = pPlayer->GetGroup())
+            uint32 memberTicketId = queueInfo->ticketId;
+            time_t memberJoinTime = queueInfo->joinedTime;
+
+            RetainedTicket memberTicket;
+            if (GetRetainedTicket(rItr->first, memberTicket))
             {
+                memberQueueGuid = ObjectGuid(memberTicket.requesterGuid);
+                memberTicketId = memberTicket.id;
+                memberJoinTime = time_t(memberTicket.time);
+            }
+            else if (Group* pGroup = pPlayer->GetGroup())
+            {
+                // No retained identity: fall back to the old derivation.
                 if (pGroup->GetObjectGuid() == queueGuid)
                 {
                     memberQueueGuid = queueGuid;
@@ -1590,9 +1617,11 @@ void LFGMgr::SendQueueStatusFor(ObjectGuid queueGuid, time_t timeNow)
             status.neededTanks      = queueInfo->neededTanks;
             status.neededHeals      = queueInfo->neededHealers;
             status.neededDps        = queueInfo->neededDps;
-            status.timeSpentInQueue = uint32(timeNow - queueInfo->joinedTime);
-            status.joinTime = uint32(queueInfo->joinedTime);
-            status.ticketId = queueInfo->ticketId;
+            // Elapsed is measured from the same start the identity states, or the body
+            // would claim one join time and a duration counted from another.
+            status.timeSpentInQueue = uint32(timeNow - memberJoinTime);
+            status.joinTime = uint32(memberJoinTime);
+            status.ticketId = memberTicketId;
 
             int32 playerWaitTime;
 

@@ -1492,7 +1492,12 @@ public:
     /// to whichever entry now LISTS them -- the absorbing one -- and hands back a stranger's
     /// ticket. Adopting it would strand that player's own join record for good.
     ///
-    /// Cleared by ForgetTicket when the queue genuinely ends, so the next join starts fresh.
+    /// Replaced wholesale by BeginTicket when the next queue starts, which is what actually
+    /// keeps this fresh. ForgetTicket exists for an explicit clear but currently has no
+    /// callers, so nothing relies on it -- a retained record simply lives until the player's
+    /// next join overwrites it. That is bounded by one entry per player and correct for the
+    /// paths that send bodies, since a leave sets LFG_STATE_NONE and the only body between
+    /// leave and re-join is gated on that state.
     void RetainTicket(ObjectGuid plrGuid, ObjectGuid requesterGuid, uint32 id, uint32 time)
     {
         if (!id)
