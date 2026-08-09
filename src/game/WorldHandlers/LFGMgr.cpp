@@ -997,24 +997,17 @@ void LFGMgr::CancelProposal(uint32 proposalId, std::set<ObjectGuid> const& culpr
             entry->currentRoles.erase(*bad);
         }
 
-        // isGroup derived from how this member was ANNOUNCED, not hardcoded false.
-        //
-        // The client files each status body under the whole 20-byte RideTicket, and
-        // SendLfgUpdate picks requesterGuid from this flag. A party-owned queue announced
-        // its opening bodies group-keyed (reason 24 at LFGMgrQueue.cpp, reason 14 at
-        // SendDungeonProposal), so closing with false carried a DIFFERENT ticket: the
-        // client created a second record and left the first at joined = 1, queued = 0,
-        // which UIParent.lua:3932 reports as "suspended" -- the eye stuck until relog.
-        // This is the mainline path for an ordinary decline.
-        //
-        // proposal.groups records exactly how each member was announced, so it is the
-        // authority here.
+        // The retained ticket is authoritative: requesterGuid is part of the client's
+        // record key and current group membership may have changed since the opening body.
+        // proposal.groups supplies only the compatibility fallback for a path lacking a
+        // retained ticket; reducing its exact group guid to a bool is not an authority.
         playerGroupMap::const_iterator badGroup = proposal.groups.find(*bad);
-        bool const badWasGroupKeyed = badGroup != proposal.groups.end() && badGroup->second;
+        bool const badFallbackWasGroupKeyed =
+            badGroup != proposal.groups.end() && badGroup->second;
 
         SetPlayerState(*bad, LFG_STATE_NONE);
         SetPlayerUpdateType(*bad, LFG_UPDATE_LEAVE);
-        SendLfgUpdate(*bad, GetPlayerStatus(*bad), badWasGroupKeyed);
+        SendLfgUpdate(*bad, GetPlayerStatus(*bad), badFallbackWasGroupKeyed);
 
         m_playerStatusMap.erase(*bad);
 
@@ -1042,11 +1035,12 @@ void LFGMgr::CancelProposal(uint32 proposalId, std::set<ObjectGuid> const& culpr
          role != entry->currentRoles.end(); ++role)
     {
         playerGroupMap::const_iterator roleGroup = proposal.groups.find(role->first);
-        bool const roleWasGroupKeyed = roleGroup != proposal.groups.end() && roleGroup->second;
+        bool const roleFallbackWasGroupKeyed =
+            roleGroup != proposal.groups.end() && roleGroup->second;
 
         SetPlayerState(role->first, LFG_STATE_QUEUED);
         SetPlayerUpdateType(role->first, LFG_UPDATE_ADDED_TO_QUEUE);
-        SendLfgUpdate(role->first, GetPlayerStatus(role->first), roleWasGroupKeyed);
+        SendLfgUpdate(role->first, GetPlayerStatus(role->first), roleFallbackWasGroupKeyed);
     }
 
     // Anyone in the proposal who was neither blamed nor requeued still has an open
@@ -1063,11 +1057,12 @@ void LFGMgr::CancelProposal(uint32 proposalId, std::set<ObjectGuid> const& culpr
         }
 
         playerGroupMap::const_iterator ansGroup = proposal.groups.find(ans->first);
-        bool const ansWasGroupKeyed = ansGroup != proposal.groups.end() && ansGroup->second;
+        bool const ansFallbackWasGroupKeyed =
+            ansGroup != proposal.groups.end() && ansGroup->second;
 
         SetPlayerState(ans->first, LFG_STATE_NONE);
         SetPlayerUpdateType(ans->first, LFG_UPDATE_LEAVE);
-        SendLfgUpdate(ans->first, GetPlayerStatus(ans->first), ansWasGroupKeyed);
+        SendLfgUpdate(ans->first, GetPlayerStatus(ans->first), ansFallbackWasGroupKeyed);
     }
 
     m_queueSet.insert(proposal.queueGuid);

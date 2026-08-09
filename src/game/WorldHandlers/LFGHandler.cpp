@@ -480,7 +480,7 @@ void WorldSession::SendLfgJoinResult(LfgJoinResult result, uint8 detail, partyFo
     SendPacket(&data);
 }
 
-void WorldSession::SendLfgUpdate(bool isGroup, LFGPlayerStatus status)
+void WorldSession::SendLfgUpdate(bool fallbackIsGroup, LFGPlayerStatus status)
 {
     bool joined = false;
     bool isQueued = false;
@@ -515,15 +515,21 @@ void WorldSession::SendLfgUpdate(bool isGroup, LFGPlayerStatus status)
     }
 
     ObjectGuid const playerGuid = GetPlayer()->GetObjectGuid();
+
+    // The requester is part of the RideTicket key, so current group membership is
+    // only a fallback for a path that has not established an authoritative ticket.
     ObjectGuid queueGuid = playerGuid;
-    if (isGroup && GetPlayer()->GetGroup())
+    if (fallbackIsGroup && GetPlayer()->GetGroup())
         queueGuid = GetPlayer()->GetGroup()->GetObjectGuid();
+
+    LFGMgr::RetainedTicket retained;
+    if (sLFGMgr.GetRetainedTicket(playerGuid, retained))
+        queueGuid = ObjectGuid(retained.requesterGuid);
 
     LFGStatusPacketData queueData;
     sLFGMgr.GetStatusPacketData(queueGuid, playerGuid, queueData);
 
     MopLfgPackets::StatusUpdate update;
-    update.requesterGuid = queueGuid.GetRawValue();
     update.comment = status.comment;
     // Retail leaves these 0,0,0 in all 5291 observed bodies without exception; the
     // role shortage is advertised in SMSG_LFG_QUEUE_STATUS instead.
@@ -537,11 +543,6 @@ void WorldSession::SendLfgUpdate(bool isGroup, LFGPlayerStatus status)
     // notifyUi tracks joined -- equal in 5288 of 5291 bodies, and 0 for every terminal
     // reason (8, 9, 11, 15, 25). It was defaulted true and never assigned.
     update.notifyUi = joined;
-    // Not "did the player leave" and not "is the player inside": this bit says the
-    // queue entry is owned by a GROUP. All 1931 bodies with a group-typed requesterGuid
-    // carry it at every stage, including open-world queueing. It moves together with
-    // requesterGuid, which is exactly the condition that selected queueGuid above.
-    update.lfgJoined = (queueGuid != playerGuid);
     update.queued = isQueued;
     update.requestedRoles = queueData.roles;
     update.updateReason = uint8(status.updateType);
@@ -554,15 +555,14 @@ void WorldSession::SendLfgUpdate(bool isGroup, LFGPlayerStatus status)
     // stored) and used to hand back a default-constructed struct, shipping ticketId = 0.
     // Retail sends 0 in none of 5291 observed bodies.
     //
-    // So: take the live ticket when there is one and remember it; otherwise reuse whatever
-    // this player's bodies have already gone out under.
-    // Remember the first ticket this player's bodies go out under, then use THAT for
-    // every later body -- including ones whose live lookup would now resolve elsewhere.
-    sLFGMgr.RetainTicket(playerGuid, queueData.ticketId, queueData.joinedTime);
+    // Remember the first COMPLETE identity this player's bodies go out under, then
+    // use that requester, id and time for every later body -- including ones whose
+    // live lookup now resolves elsewhere after a merge or regroup.
+    sLFGMgr.RetainTicket(playerGuid, queueGuid, queueData.ticketId, queueData.joinedTime);
 
-    LFGMgr::RetainedTicket retained;
     if (sLFGMgr.GetRetainedTicket(playerGuid, retained))
     {
+        queueGuid = ObjectGuid(retained.requesterGuid);
         update.ticketId = retained.id;
         update.ticketTime = retained.time;
     }
@@ -577,6 +577,12 @@ void WorldSession::SendLfgUpdate(bool isGroup, LFGPlayerStatus status)
                           GetPlayerName(), uint32(status.updateType));
         }
     }
+
+    update.requesterGuid = queueGuid.GetRawValue();
+    // Not "did the player leave" and not "is the player inside": this bit says the
+    // retained requester is a group rather than this player. It must move with
+    // requesterGuid because both describe the same client record.
+    update.lfgJoined = (queueGuid != playerGuid);
 
     // NOTHING is forgotten here. The ticket belongs to the queue entry and is replaced by
     // LFGMgr::BeginTicket when the next entry is built -- see the note there for why

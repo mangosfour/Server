@@ -166,6 +166,28 @@ static void TestBootTerminalStates()
     CHECK(plan.victim == LFGStatePolicy::BootPlayerState::None);
 }
 
+static void TestTicketIdentityRetainsRequesterUntilNewQueue()
+{
+    LFGStatePolicy::TicketIdentity ticket;
+
+    ticket.Retain(0x11, 101, 1001);
+    CHECK(ticket.requesterGuid == 0x11);
+    CHECK(ticket.id == 101);
+    CHECK(ticket.time == 1001);
+
+    // A merge or regroup must not replace the identity already sent to the client.
+    ticket.Retain(0x22, 202, 2002);
+    CHECK(ticket.requesterGuid == 0x11);
+    CHECK(ticket.id == 101);
+    CHECK(ticket.time == 1001);
+
+    // A genuinely new queue owns a new complete ticket identity.
+    ticket.Begin(0x22, 202, 2002);
+    CHECK(ticket.requesterGuid == 0x22);
+    CHECK(ticket.id == 202);
+    CHECK(ticket.time == 2002);
+}
+
 int main()
 {
     TestDifficultyMustResolveBeforeMutation();
@@ -177,5 +199,6 @@ int main()
     TestOnlyLeaderMutatesAGroupQueue();
     TestOnlyRosterMembersSubmitRoles();
     TestBootTerminalStates();
+    TestTicketIdentityRetainsRequesterUntilNewQueue();
     return g_fail == 0 ? 0 : 1;
 }

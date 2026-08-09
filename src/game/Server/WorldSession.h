@@ -1560,7 +1560,7 @@ class WorldSession
         }
         void SendPetNameInvalid(uint32 error, const std::string& name, DeclinedName* declinedName);
         void SendLfgJoinResult(LfgJoinResult result, uint8 detail, partyForbidden const& lockedDungeons);
-        void SendLfgUpdate(bool isGroup, LFGPlayerStatus status);
+        void SendLfgUpdate(bool fallbackIsGroup, LFGPlayerStatus status);
         void SendLfgQueueStatus(LFGQueueStatus const& status);
         void SendLfgPlayerLockInfo();
         void SendLfgPartyLockInfo();

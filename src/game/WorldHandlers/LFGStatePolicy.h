@@ -34,6 +34,33 @@
 
 namespace LFGStatePolicy
 {
+struct TicketIdentity
+{
+    uint64 requesterGuid = 0;
+    uint32 id = 0;
+    uint32 time = 0;
+
+    // FIRST WINS for one queue lifetime. The client keys status records on this
+    // identity, so a merge or regroup must not replace any field independently.
+    void Retain(uint64 requester, uint32 ticketId, uint32 ticketTime)
+    {
+        if (!ticketId || id)
+        {
+            return;
+        }
+
+        Begin(requester, ticketId, ticketTime);
+    }
+
+    // A genuinely new queue replaces the complete identity atomically.
+    void Begin(uint64 requester, uint32 ticketId, uint32 ticketTime)
+    {
+        requesterGuid = requester;
+        id = ticketId;
+        time = ticketTime;
+    }
+};
+
 struct DifficultyPlan
 {
     bool valid;

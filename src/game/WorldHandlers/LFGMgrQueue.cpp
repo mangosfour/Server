@@ -76,12 +76,15 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
         return;
     }
 
-    // Keyed on whichever entry LISTS this player, not on the requested queue owner.
-    // MergeGroups keeps the lower raw key; player guids sort before group guids, so a
-    // solo entry can absorb a party and erase the group's own key while still listing
-    // every party member in currentRoles. Resolving only the requested owner would then
-    // build a second live entry for those members.
-    ObjectGuid const existingEntryGuid = FindQueueEntryContaining(playerGuid);
+    // Prefer the party's own live entry. If a merge erased that key, fall back to
+    // whichever entry LISTS this player: player guids sort before group guids, so a
+    // solo entry can absorb a party while still listing every party member.
+    ObjectGuid existingEntryGuid;
+    if (pGroup && GetPlayerOrPartyData(guid))
+        existingEntryGuid = guid;
+    else
+        existingEntryGuid = FindQueueEntryContaining(playerGuid);
+
     LFGPlayers* currentInfo = existingEntryGuid ? GetPlayerOrPartyData(existingEntryGuid) : nullptr;
     bool replaceQueuedEntry = false;
 
@@ -383,31 +386,10 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
 
                 if (Player* stalePlayer = sObjectAccessor.FindPlayer(*itr))
                 {
-                    // Ownership follows how the player's queue was opened: party members
-                    // are group-keyed, while an absorbed solo remains player-keyed.
-                    //
-                    // Inferred from CURRENT grouping, which is right for the merge this
-                    // fixes -- party members are still partied, the absorbed solo is still
-                    // solo -- but is a proxy, not the authority. requesterGuid is part of
-                    // the client's 20-byte RideTicket record key, so a player who regrouped
-                    // WHILE queued gets a terminal body keyed to the wrong owner, and their
-                    // old record stays lit at joined=1 -- the stuck eye this branch exists
-                    // to kill.
-                    //
-                    // Nothing clears queue state on group join, so it is reachable both
-                    // ways: announced solo then joins a party, or announced group then
-                    // leaves it. CancelProposal is NOT a working precedent -- it reads
-                    // proposal.groups, which does hold the original group guid, but reduces
-                    // it to a bool, and WorldSession::SendLfgUpdate then rebuilds the
-                    // requester from the player's current group regardless. A player who
-                    // moved from group G to H still gets H there too.
-                    //
-                    // Fixing it properly means an authoritative requester that survives a
-                    // merge: RetainedTicket already exists for exactly that lifetime and
-                    // should carry requesterGuid alongside the id and time, first-wins
-                    // through MergeGroups, overwritten by BeginTicket only for a genuinely
-                    // new queue. Follow-up, not a regression -- the old code sent these
-                    // members nothing at all, so every case orphaned.
+                    // Current grouping is only the compatibility fallback. SendLfgUpdate
+                    // uses this member's retained requester, id and time when available, so
+                    // both announced-solo-then-grouped and announced-group-then-left records
+                    // are closed under the identity the client actually knows.
                     SendLfgUpdate(*itr, staleStatus, stalePlayer->GetGroup() != NULL);
                 }
 
@@ -490,7 +472,7 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
         {
             if (Player* pGroupPlr = itr->getSource())
             {
-                BeginTicket(pGroupPlr->GetObjectGuid(), groupInfo.ticketId, uint32(groupInfo.joinedTime));
+                BeginTicket(pGroupPlr->GetObjectGuid(), guid, groupInfo.ticketId, uint32(groupInfo.joinedTime));
                 // Where each member gets returned to. Per-player, taken here and never again.
                 RecordEntryPoint(pGroupPlr);
             }
@@ -546,7 +528,7 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
         playerInfo.randomDungeonID = randomDungeonID;
         playerInfo.ticketId = AllocateTicketId();
         m_playerData[guid] = playerInfo;
-        BeginTicket(guid, playerInfo.ticketId, uint32(playerInfo.joinedTime));
+        BeginTicket(guid, guid, playerInfo.ticketId, uint32(playerInfo.joinedTime));
         // Where this player gets returned to. Taken here and never again -- see RecordEntryPoint.
         RecordEntryPoint(plr);
 

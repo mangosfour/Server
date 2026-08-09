@@ -831,25 +831,18 @@ void LFGMgr::ProposalUpdate(uint32 proposalID, ObjectGuid plrGuid, bool accepted
         proposalPlrStatus.dungeonList.clear();
         proposalPlrStatus.dungeonList.insert(proposal->dungeonID);
 
-        // ONE key, used for both packets.
-        //
-        // The queue entry is owned by the player's CURRENT group if they have one --
-        // that is the same test JoinLFG used to key m_playerData -- so the GROUP_FOUND
-        // and the LEAVE that follows it must both be sent under that key. The LEAVE used
-        // to be sent TWICE, once in each form, on the theory that one of them would
-        // match. It cannot help: SendLfgUpdate picks requesterGuid from the isGroup flag,
-        // so the wrong-form copy names a queue the client is not tracking, and at accept
-        // time GetGroup() is still the player's OLD party rather than the LFG group being
-        // formed -- so the group-form copy could name a third guid again.
-        bool const queueIsGroupOwned = pProposalPlayer->GetGroup() != nullptr;
+        // ONE retained key, used for both packets. Current grouping is only the
+        // compatibility fallback; SendLfgUpdate keeps the requester originally announced
+        // for this queue even if the player's group changed during the proposal.
+        bool const fallbackIsGroupOwned = pProposalPlayer->GetGroup() != nullptr;
 
-        SendLfgUpdate(proposalPlrGuid, proposalPlrStatus, queueIsGroupOwned);
-        RemoveFromQueue(queueIsGroupOwned ? pProposalPlayer->GetGroup()->GetObjectGuid()
-                                          : proposalPlrGuid);
+        SendLfgUpdate(proposalPlrGuid, proposalPlrStatus, fallbackIsGroupOwned);
+        RemoveFromQueue(fallbackIsGroupOwned ? pProposalPlayer->GetGroup()->GetObjectGuid()
+                                             : proposalPlrGuid);
 
         proposalPlrStatus.updateType = LFG_UPDATE_LEAVE;
         proposalPlrStatus.dungeonList = queuedDungeons;
-        SendLfgUpdate(proposalPlrGuid, proposalPlrStatus, queueIsGroupOwned);
+        SendLfgUpdate(proposalPlrGuid, proposalPlrStatus, fallbackIsGroupOwned);
     }
 
     CreateDungeonGroup(proposal, groupPlan);
@@ -2059,13 +2052,13 @@ void LFGMgr::SendRoleCheckUpdate(ObjectGuid plrGuid, LFGRoleCheck const& roleChe
     }
 }
 
-void LFGMgr::SendLfgUpdate(ObjectGuid plrGuid, LFGPlayerStatus status, bool isGroup)
+void LFGMgr::SendLfgUpdate(ObjectGuid plrGuid, LFGPlayerStatus status, bool fallbackIsGroup)
 {
     Player* pPlayer = sObjectAccessor.FindPlayer(plrGuid);
 
     if (pPlayer)
     {
-        pPlayer->GetSession()->SendLfgUpdate(isGroup, status);
+        pPlayer->GetSession()->SendLfgUpdate(fallbackIsGroup, status);
     }
 }
 
