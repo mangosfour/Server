@@ -49,7 +49,8 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
     //       - see if any of this code/information can be put into a generalized class for other use
     //       - look into splitting this into 2 fns- one for player case, one for group
     Group* pGroup = plr->GetGroup();
-    ObjectGuid guid = (pGroup) ? pGroup->GetObjectGuid() : plr->GetObjectGuid();
+    ObjectGuid const playerGuid = plr->GetObjectGuid();
+    ObjectGuid guid = (pGroup) ? pGroup->GetObjectGuid() : playerGuid;
     // Assigned only on the random-dungeon branch, but read unconditionally
     // further down, so it must not start indeterminate.
     uint32 randomDungeonID = 0; // used later if random dungeon has been chosen
@@ -68,20 +69,19 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
     // relog -- which is exactly what happened when the success path forgot to tear the
     // queue entry down. Asking m_proposalMap directly cannot go stale: if there is no
     // live proposal listing this player, there is nothing to protect.
-    if (HasLiveProposalFor(plr->GetObjectGuid()))
+    if (HasLiveProposalFor(playerGuid))
     {
         partyForbidden noneForbidden;
         plr->GetSession()->SendLfgJoinResult(ERR_LFG_NO_LFG_OBJECT, LFG_JOIN_DETAIL_NONE, noneForbidden);
         return;
     }
 
-    // Keyed on whichever entry LISTS this player, not on their own guid.
-    //
-    // A solo queuer already absorbed into somebody else's entry has no m_playerData
-    // under their own guid, so this lookup missed, the duplicate cleanup below was
-    // skipped, and the solo branch built a SECOND live entry while the merged one still
-    // listed them -- two queue entries for one player, and potentially two proposals.
-    ObjectGuid const existingEntryGuid = pGroup ? guid : FindQueueEntryContaining(guid);
+    // Keyed on whichever entry LISTS this player, not on the requested queue owner.
+    // MergeGroups keeps the lower raw key; player guids sort before group guids, so a
+    // solo entry can absorb a party and erase the group's own key while still listing
+    // every party member in currentRoles. Resolving only the requested owner would then
+    // build a second live entry for those members.
+    ObjectGuid const existingEntryGuid = FindQueueEntryContaining(playerGuid);
     LFGPlayers* currentInfo = existingEntryGuid ? GetPlayerOrPartyData(existingEntryGuid) : nullptr;
     bool replaceQueuedEntry = false;
 
@@ -94,8 +94,8 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
         if (currentInfo->currentState == LFG_STATE_QUEUED)
         {
             // Keep the old entry until the replacement selection passes every join gate.
-            // Treat it as absent for the remaining current-state checks, then remove the
-            // player immediately before creating the replacement entry below.
+            // Treat it as absent for the remaining state checks, then end that complete
+            // entry immediately before creating the replacement below.
             replaceQueuedEntry = true;
             currentInfo = nullptr;
         }
@@ -346,9 +346,78 @@ void LFGMgr::JoinLFG(uint32 roles, std::set<uint32> dungeons, std::string commen
 
     if (replaceQueuedEntry)
     {
-        // RemovePlayerFromQueue rather than a bare m_queueSet.erase, because the
-        // entry may be shared with other players who must stay queued.
-        RemovePlayerFromQueue(guid);
+        // End the complete merged entry before building its replacement. The client keys
+        // status records by RideTicket -- requesterGuid, ticketId, ticketTime, ticketType --
+        // so every listed player needs a terminal body while their OLD retained ticket is
+        // still active; BeginTicket below may then safely assign a new ticket to the
+        // members who are re-queueing.
+        //
+        // The WHOLE entry ends, not just the members re-queueing. That deliberately
+        // dequeues a bystander the party had been merged with, which is a real loss of
+        // their queue position. It is the safest available behaviour rather than the
+        // ideal one: MergeGroups collapses provenance -- requested versus candidate
+        // dungeons, random-category identity, per-entry join times and tickets -- so what
+        // survives may no longer represent that player's original queue. Often the merged
+        // selection is a narrowed intersection they did choose, but it can equally carry
+        // a random identity contributed by the other entry. Leaving them on it is a silent
+        // zombie; ending and telling them is honest, and they may queue again. Preserving
+        // them properly means retaining each constituent queue's own selection, candidates,
+        // random identity, role, comment and ticket through MergeGroups and splitting them
+        // back out here -- materially more than rekeying the merged object.
+        if (LFGPlayers const* staleEntry = GetPlayerOrPartyData(existingEntryGuid))
+        {
+            std::vector<ObjectGuid> staleMembers;
+            staleMembers.reserve(staleEntry->currentRoles.size());
+            for (roleMap::const_iterator itr = staleEntry->currentRoles.begin();
+                 itr != staleEntry->currentRoles.end(); ++itr)
+            {
+                staleMembers.push_back(itr->first);
+            }
+
+            for (std::vector<ObjectGuid>::const_iterator itr = staleMembers.begin();
+                 itr != staleMembers.end(); ++itr)
+            {
+                LFGPlayerStatus staleStatus = GetPlayerStatus(*itr);
+                staleStatus.updateType = LFG_UPDATE_LEAVE;
+                staleStatus.state = LFG_STATE_NONE;
+
+                if (Player* stalePlayer = sObjectAccessor.FindPlayer(*itr))
+                {
+                    // Ownership follows how the player's queue was opened: party members
+                    // are group-keyed, while an absorbed solo remains player-keyed.
+                    //
+                    // Inferred from CURRENT grouping, which is right for the merge this
+                    // fixes -- party members are still partied, the absorbed solo is still
+                    // solo -- but is a proxy, not the authority. requesterGuid is part of
+                    // the client's 20-byte RideTicket record key, so a player who regrouped
+                    // WHILE queued gets a terminal body keyed to the wrong owner, and their
+                    // old record stays lit at joined=1 -- the stuck eye this branch exists
+                    // to kill.
+                    //
+                    // Nothing clears queue state on group join, so it is reachable both
+                    // ways: announced solo then joins a party, or announced group then
+                    // leaves it. CancelProposal is NOT a working precedent -- it reads
+                    // proposal.groups, which does hold the original group guid, but reduces
+                    // it to a bool, and WorldSession::SendLfgUpdate then rebuilds the
+                    // requester from the player's current group regardless. A player who
+                    // moved from group G to H still gets H there too.
+                    //
+                    // Fixing it properly means an authoritative requester that survives a
+                    // merge: RetainedTicket already exists for exactly that lifetime and
+                    // should carry requesterGuid alongside the id and time, first-wins
+                    // through MergeGroups, overwritten by BeginTicket only for a genuinely
+                    // new queue. Follow-up, not a regression -- the old code sent these
+                    // members nothing at all, so every case orphaned.
+                    SendLfgUpdate(*itr, staleStatus, stalePlayer->GetGroup() != NULL);
+                }
+
+                m_playerStatusMap.erase(*itr);
+            }
+        }
+
+        m_queueSet.erase(existingEntryGuid);
+        m_playerData.erase(existingEntryGuid);
+        m_playerStatusMap.erase(existingEntryGuid); // no-op unless the key is a player's
     }
 
     if (pGroup)
