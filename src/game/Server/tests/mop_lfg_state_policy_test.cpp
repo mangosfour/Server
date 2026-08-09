@@ -188,6 +188,23 @@ static void TestTicketIdentityRetainsRequesterUntilNewQueue()
     CHECK(ticket.time == 2002);
 }
 
+static void TestRetainedTicketIdentityWinsAsACompleteUnit()
+{
+    LFGStatePolicy::TicketIdentity retained;
+    retained.Begin(0x1F5400001249B4F0ULL, 0x4692, 0x53D28F06);
+
+    LFGStatePolicy::TicketIdentity resolved =
+        LFGStatePolicy::ResolveTicketIdentity(&retained, 0x06296291, 0x9BFF, 0x54146107);
+    CHECK(resolved.requesterGuid == 0x1F5400001249B4F0ULL);
+    CHECK(resolved.id == 0x4692);
+    CHECK(resolved.time == 0x53D28F06);
+
+    resolved = LFGStatePolicy::ResolveTicketIdentity(nullptr, 0x06296291, 0x9BFF, 0x54146107);
+    CHECK(resolved.requesterGuid == 0x06296291);
+    CHECK(resolved.id == 0x9BFF);
+    CHECK(resolved.time == 0x54146107);
+}
+
 int main()
 {
     TestDifficultyMustResolveBeforeMutation();
@@ -200,5 +217,6 @@ int main()
     TestOnlyRosterMembersSubmitRoles();
     TestBootTerminalStates();
     TestTicketIdentityRetainsRequesterUntilNewQueue();
+    TestRetainedTicketIdentityWinsAsACompleteUnit();
     return g_fail == 0 ? 0 : 1;
 }

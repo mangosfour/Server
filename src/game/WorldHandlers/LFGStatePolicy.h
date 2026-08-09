@@ -61,6 +61,21 @@ struct TicketIdentity
     }
 };
 
+inline TicketIdentity ResolveTicketIdentity(TicketIdentity const* retained,
+                                              uint64 fallbackRequester,
+                                              uint32 fallbackId,
+                                              uint32 fallbackTime)
+{
+    if (retained && retained->id)
+    {
+        return *retained;
+    }
+
+    TicketIdentity fallback;
+    fallback.Begin(fallbackRequester, fallbackId, fallbackTime);
+    return fallback;
+}
+
 struct DifficultyPlan
 {
     bool valid;

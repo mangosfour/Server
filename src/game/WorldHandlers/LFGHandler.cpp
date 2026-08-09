@@ -447,14 +447,28 @@ void WorldSession::SendLfgJoinResult(LfgJoinResult result, uint8 detail, partyFo
     // zeroed shape, so a refusal must not invent a ticket.
     if (result == ERR_LFG_OK)
     {
-        if (Player* player = GetPlayer())
+        ObjectGuid const playerGuid = GetPlayer()->GetObjectGuid();
+        ObjectGuid queueGuid = playerGuid;
+
+        LFGMgr::RetainedTicket retained;
+        LFGMgr::RetainedTicket const* retainedIdentity = nullptr;
+        if (sLFGMgr.GetRetainedTicket(playerGuid, retained))
         {
-            update.requesterGuid = player->GetObjectGuid().GetRawValue();
+            queueGuid = ObjectGuid(retained.requesterGuid);
+            retainedIdentity = &retained;
         }
+
         LFGStatusPacketData queueData;
-        sLFGMgr.GetStatusPacketData(GetPlayer()->GetObjectGuid(), GetPlayer()->GetObjectGuid(), queueData);
-        update.joinTime = queueData.joinedTime ? queueData.joinedTime : uint32(time(NULL));
-        update.clientQueueId = queueData.ticketId;
+        sLFGMgr.GetStatusPacketData(queueGuid, playerGuid, queueData);
+
+        LFGStatePolicy::TicketIdentity const identity =
+            LFGStatePolicy::ResolveTicketIdentity(
+                retainedIdentity, playerGuid.GetRawValue(), queueData.ticketId,
+                queueData.joinedTime ? queueData.joinedTime : uint32(time(NULL)));
+
+        update.requesterGuid = identity.requesterGuid;
+        update.joinTime = identity.time;
+        update.clientQueueId = identity.id;
         update.ticketType = 3;
     }
 

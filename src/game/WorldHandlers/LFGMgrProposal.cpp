@@ -185,6 +185,12 @@ void LFGMgr::PerformRoleCheck(Player* pPlayer, Group* pGroup, uint8 roles)
 
         m_playerData[groupGuid] = *queueInfo;
 
+        // Retail sends the successful join result to the leader after the role check
+        // completes. BeginTicket ran before the opening status, so this quotes the same
+        // retained group requester, id and time as every other body for the queue.
+        SendLfgJoinResult(ObjectGuid(roleCheck.leaderGuidRaw), ERR_LFG_OK,
+                          LFG_JOIN_DETAIL_NONE, nullForbidden);
+
         AddToQueue(groupGuid);
 
         // The check is resolved; leaving it in the map makes RemoveOldRoleChecks expire
