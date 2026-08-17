@@ -45,9 +45,9 @@
     #define PROJECT_REVISION_NR         "2201001"
 
     #define REALMD_DB_VERSION_NR        "22"
-    #define REALMD_DB_STRUCTURE_NR      "1"
+    #define REALMD_DB_STRUCTURE_NR      "4"
     #define REALMD_DB_CONTENT_NR        "1"
-    #define REALMD_DB_UPDATE_DESCRIPT   "Release 22"
+    #define REALMD_DB_UPDATE_DESCRIPT   "Warden audit"
 
     // Structure 2: `instance_reset`.`difficulty` changed key space, from raw client
     // DifficultyIDs to the core's internal 0-based Difficulty. The two OVERLAP -- a stale
@@ -59,21 +59,17 @@
     // fatal in Database::CheckDatabaseVersion, whereas a content lag is only a warning and
     // would let exactly the affected database start silently.
     // The matching characters update deletes `instance_reset` and advances `db_version`.
+    // Structure 3 then removes the legacy per-check Warden punishment table;
+    // the replacement has no Character-database state.
     #define CHAR_DB_VERSION_NR          "23"
-    #define CHAR_DB_STRUCTURE_NR        "2"
+    #define CHAR_DB_STRUCTURE_NR        "3"
     #define CHAR_DB_CONTENT_NR          "1"
-    // Must match, character for character, the description the characters update inserts
-    // (Rel23_02_001_Instance_Reset_Difficulty_Key_Space.sql). db_version.description is
-    // varchar(30); the previous string was 43 characters, so it could never equal any row
-    // the update could write. Harmless -- CheckDatabaseVersion only PRINTS the description
-    // and gates on version/structure -- but it made the mismatch banner advertise an
-    // expected value no database could ever hold.
-    #define CHAR_DB_UPDATE_DESCRIPT     "difficulty key spaces"
+    #define CHAR_DB_UPDATE_DESCRIPT     "Remove_Warden_Action"
 
     #define WORLD_DB_VERSION_NR         "23"
-    #define WORLD_DB_STRUCTURE_NR       "3"
-    #define WORLD_DB_CONTENT_NR         "10"
-    #define WORLD_DB_UPDATE_DESCRIPT    "Add BlobId field to quest_poi"
+    #define WORLD_DB_STRUCTURE_NR       "4"
+    #define WORLD_DB_CONTENT_NR         "1"
+    #define WORLD_DB_UPDATE_DESCRIPT    "Warden_Checks"
 
     #define VER_COMPANY_NAME_STR        "MaNGOS Developers"
     #define VER_LEGALCOPYRIGHT_STR      "(c)2005-@rev_year@ MaNGOS"

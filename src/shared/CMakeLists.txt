@@ -29,14 +29,13 @@ set(SRC_GRP_AUTH
   Auth/BigNumber.h
   Auth/HMACSHA1.cpp
   Auth/HMACSHA1.h
+  Auth/Md5.h
   Auth/MopAuthKey.cpp
   Auth/MopAuthKey.h
   Auth/OpenSSLProvider.cpp
   Auth/OpenSSLProvider.h
   Auth/Sha1.cpp
   Auth/Sha1.h
-  Auth/md5.c
-  Auth/md5.h
 )
 source_group("Auth" FILES ${SRC_GRP_AUTH})
 
