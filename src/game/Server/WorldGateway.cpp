@@ -233,25 +233,11 @@ proto::AuthLookup WorldGateway::LookupAccount(const proto::AuthRequest& request)
         return result;
     }
 
-    // Phase 3 defers Warden structurally (re-homed from WorldSocket.cpp:1440-1456,
-    // that file now deleted). Everything needed to re-enable it correctly is stated
-    // there; do not re-add the code without addressing all four points:
-    //   1. K CONSUMER. Warden is the fourth consumer of K (after the digest check,
-    //      AuthCrypt::Prepare and this row). WorldSession::InitWarden still takes
-    //      BigNumber* k and currently has ZERO callers, so the compiler will NOT
-    //      flag it when the key representation changes -- this comment is the only
-    //      barrier.
-    //   2. SHORT-K BUG. WardenWin.cpp/WardenMac.cpp reseed from k->AsByteArray(),
-    //      k->GetNumBytes(). A raw-40 K (row->sessionKey / m_sessionKey) fixes this
-    //      by construction; a BigNumber-shaped K does not -- never re-wrap it.
-    //   3. NO KEY LOGGING. Warden logged its derived encryption keys; that logging
-    //      was removed and must not be reintroduced.
-    //   4. ORDERING. InitWarden previously ran BEFORE session publication, making
-    //      SMSG_WARDEN_DATA the first encrypted server packet, ahead of
-    //      SMSG_AUTH_RESPONSE. Re-enabling must decide that ordering deliberately.
-    // Also unlike MangosThree's WorldGateway: M4's account table has no `os` column,
-    // so there is no Warden client-OS gate to port -- do not add one without a
-    // schema migration.
+    // Warden is intentionally absent during this schema-first transition. A
+    // later implementation must consume the canonical raw-40 K without a
+    // BigNumber round trip, never log key material, and deliberately order its
+    // first server packet after authentication. This path deliberately does not
+    // select or gate on `account.os`; removal must not change that auth policy.
 
     result.status = proto::AuthStatus::Ok;
     std::memcpy(result.sessionKey, row->sessionKey, sizeof(result.sessionKey));

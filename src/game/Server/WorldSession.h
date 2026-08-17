@@ -31,7 +31,6 @@
 #define MANGOS_H_WORLDSESSION
 
 #include "Common.h"
-#include "Auth/BigNumber.h"
 #include "Auth/MopAuthKey.h"
 #include "SharedDefines.h"
 #include "ObjectGuid.h"
@@ -58,7 +57,6 @@ class Item;
 class Object;
 class Player;
 class Unit;
-class Warden;
 class WorldPacket;
 class QueryResult;
 class LoginQueryHolder;
@@ -1500,8 +1498,8 @@ class WorldSession
          * @param locale Locale
          * @param sessionKey The account's canonical raw-40 session key (K),
          *             carried in from WorldGateway::LookupAccount rather than
-         *             re-read: SendRedirectClient()'s HMAC seed and (once
-         *             re-enabled) Warden both need it, and re-deriving it a
+         *             re-read: SendRedirectClient()'s HMAC seed and future
+         *             authenticated subsystems need it, and re-deriving it a
          *             second time from the DB is how a stale/second read
          *             desyncs from the key proto already proved the client
          *             holds.
@@ -1616,9 +1614,6 @@ class WorldSession
             _player = plr;
         }
         uint8 Expansion() const { return m_expansion; }
-
-        // Warden
-        void InitWarden(uint16 build, BigNumber* k, std::string const& os);
 
         /// Session in auth.queue currently
         void SetInQueue(bool state)
@@ -2251,9 +2246,6 @@ class WorldSession
         void HandleBotPackets();
 #endif
 
-        // for Warden
-        uint16 GetClientBuild() const { return _build; }
-
         // Guild Bank
         void HandleGuildPermissions(WorldPacket& recv_data);
         void HandleGuildBankMoneyWithdrawn(WorldPacket& recv_data);
@@ -2351,10 +2343,6 @@ class WorldSession
         AccountTypes _security;
         uint32 _accountId;
         uint8 m_expansion;
-
-        // Warden
-        Warden* _warden;                                    // Remains NULL if Warden system is not enabled by config
-        uint16 _build;                                      // connected client build
 
         time_t _logoutTime;
         uint32 m_pendingTransferRootCounter;

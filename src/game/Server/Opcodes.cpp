@@ -192,6 +192,12 @@ void InitializeOpcodes()
     // --- Opcodes registered beyond the Phase 1a login closure (kept here so they survive
     //     regeneration of opcode_register.inc). ---
 
+    // The legacy Warden implementation is intentionally absent during the
+    // schema-first transition. Keep its one grouped inbound transport known,
+    // authenticated and on the world thread, but consume the opaque body only.
+    DefC(CMSG_WARDEN_DATA, "CMSG_WARDEN_DATA", STATUS_AUTHED,
+        PROCESS_THREADUNSAFE, &WorldSession::HandleWardenDataOpcode);
+
     // CMSG_CHAR_DELETE (0x04E2) / SMSG_CHAR_DELETE (0x0C9F): delete a character from char-select.
     // The handler already exists; MoP sends the GUID bit-packed (decoded in HandleCharDeleteOpcode).
     DefC(CMSG_CHAR_DELETE, "CMSG_CHAR_DELETE", STATUS_AUTHED, PROCESS_THREADUNSAFE, &WorldSession::HandleCharDeleteOpcode);

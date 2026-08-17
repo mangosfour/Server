@@ -196,7 +196,7 @@ endif()
 #
 #   mangos_openssl        - what to link against and where the headers live.
 #                           Linked by anything that touches OpenSSL types
-#                           (Auth, Warden) so consumers inherit it.
+#                           (Auth) so consumers inherit it.
 #
 #   mangos_openssl_strict - the API level we hold ourselves to. Together these
 #                           two definitions delete the *declarations* of
