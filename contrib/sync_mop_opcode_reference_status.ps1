@@ -245,8 +245,8 @@ if ($rowCount -ne 1520) {
 }
 
 $summaryReplacements = @{
-    '(?m)^[ \t]*\*[ \t]+STATUS TOTALS:[^\r\n]*(\r?)$' =
-        " * STATUS TOTALS: ACTIVE=$($counts['TOTAL|ACTIVE']), DOC=$($counts['TOTAL|DOC']), DORMANT=$($counts['TOTAL|DORMANT'])"
+    '(?m)^[ \t]*\*[ \t]+STATUS TOTALS(?: \(excludes 3 shared MSG aliases\))?:[^\r\n]*(\r?)$' =
+        " * STATUS TOTALS (excludes 3 shared MSG aliases): ACTIVE=$($counts['TOTAL|ACTIVE']), DOC=$($counts['TOTAL|DOC']), DORMANT=$($counts['TOTAL|DORMANT'])"
     '(?m)^[ \t]*\*[ \t]+SMSG: ACTIVE=[^\r\n]*(\r?)$' =
         " *   SMSG: ACTIVE=$($counts['S|ACTIVE']), DOC=$($counts['S|DOC']), DORMANT=$($counts['S|DORMANT'])"
     '(?m)^[ \t]*\*[ \t]+CMSG: ACTIVE=[^\r\n]*(\r?)$' =
