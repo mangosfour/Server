@@ -1418,6 +1418,27 @@ void InitializeOpcodes()
     // list, not with the money-changed packet above.
     DefC(CMSG_GUILD_BANK_BUY_TAB, "CMSG_GUILD_BANK_BUY_TAB", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankBuyTab);
 
+    // Naming a tab. The naming popup is raised by RIGHT-CLICKING a tab button:
+    // Blizzard_GuildBankUI.lua:584 gates GuildBankPopupFrame:Show() on
+    // CanEditGuildBankTabInfo(), mouseButton == "RightButton", and the tab not
+    // being the purchase slot (currentTab ~= GetNumGuildBankTabs() + 1), and that
+    // is the only place in the UI that shows the frame. Buying a tab
+    // (StaticPopup.lua:485) calls BuyGuildBankTab() and nothing else. So a bought
+    // tab stayed permanently unnamed while this was dormant -- but not because the
+    // purchase raised anything, which is what an earlier version of this comment
+    // claimed. Its inherited reader was pre-MoP in every field. Derived from writer sub_68B694
+    // (thunk sub_686A1D, vtable 0xD64874); which of its two strings is the name is
+    // fixed by the Lua binding SetGuildBankTabInfo(tab, name, iconFileName), not by
+    // the writer, which cannot distinguish them. No corpus body exists at 18414.
+    DefC(CMSG_GUILD_BANK_UPDATE_TAB, "CMSG_GUILD_BANK_UPDATE_TAB", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankUpdateTab);
+
+    // The reply to a rename, sent to every online member. Its body is derived from
+    // the client's own inbound parser sub_6A224B rather than from a capture, there
+    // being none at 18414; sub_96ED66 consumes the parsed record into the tab cache
+    // and raises event 0x1AF, which is what makes this value's meaning certain
+    // despite the fork-sourced name.
+    DefS(SMSG_GUILD_EVENT_BANK_TAB_MODIFIED, "SMSG_GUILD_EVENT_BANK_TAB_MODIFIED");
+
     DefC(CMSG_GUILD_BANKER_ACTIVATE, "CMSG_GUILD_BANKER_ACTIVATE", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankerActivate);
     DefC(CMSG_GUILD_BANK_QUERY_TAB, "CMSG_GUILD_BANK_QUERY_TAB", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankQueryTab);
     DefS(SMSG_GUILD_BANK_LIST, "SMSG_GUILD_BANK_LIST");

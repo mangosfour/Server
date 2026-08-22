@@ -1867,15 +1867,21 @@ void WorldSession::HandleGuildBankUpdateTab(WorldPacket& recv_data)
 {
     DEBUG_LOG("WORLD: Received (CMSG_GUILD_BANK_UPDATE_TAB)");
 
+    // The inherited reader took a raw eight-byte GUID, then the tab, then two
+    // NUL-terminated strings. At 18414 the tab leads as a plain byte, the GUID
+    // is packed, both lengths live in the bit stream, and the strings are NOT
+    // NUL terminated -- so every field it read was wrong. See
+    // MopCompactPackets::ReadGuildBankUpdateTab for the derivation.
     ObjectGuid goGuid;
-    uint8 TabId;
+    uint8 TabId = 0;
     std::string Name;
     std::string IconIndex;
 
-    recv_data >> goGuid;
-    recv_data >> TabId;
-    recv_data >> Name;
-    recv_data >> IconIndex;
+    if (!MopCompactPackets::ReadGuildBankUpdateTab(recv_data, TabId, Name, IconIndex, goGuid))
+    {
+        DEBUG_LOG("WORLD: CMSG_GUILD_BANK_UPDATE_TAB body rejected");
+        return;
+    }
 
     if (Name.empty())
     {
@@ -1884,6 +1890,32 @@ void WorldSession::HandleGuildBankUpdateTab(WorldPacket& recv_data)
 
     if (IconIndex.empty())
     {
+        return;
+    }
+
+    // `guild_bank_tab`.`TabName` and `.TabIcon` are both varchar(100), in the
+    // database repository at Character/Setup/characterLoadDB.sql:101223. Refuse
+    // rather than hand the column something it would silently truncate: a
+    // truncated icon path renders as a missing texture, and whether anything is
+    // logged depends on SQL mode -- strict mode rejects the UPDATE and
+    // DatabaseMysql reports it, non-strict truncates silently.
+    //
+    // These are not equal units. The table is CHARSET=utf8, so varchar(100) holds
+    // 100 CHARACTERS -- up to 300 bytes -- while the comparison below is on bytes.
+    // The guard is therefore deliberately conservative rather than exact, which
+    // costs little because neither bound is reachable through the stock UI: it
+    // sanitises a name to 15 characters, and its icon picker sends a bare macro
+    // filename of about thirty bytes. The Lua binding itself is less restrained --
+    // SetGuildBankTabInfo accepts any non-empty icon string and its copy loop
+    // permits 256 bytes -- so the icon limb IS reachable by a modified client,
+    // which is the case this guard exists for. Only that limb can fire at all,
+    // the reader already capping the name at 64; the name limb is kept so the
+    // guard still holds if that cap is ever widened. Do not "simplify" the
+    // sanitiser's 16 to a byte count -- 16 characters is not 16 bytes.
+    if (Name.size() > 100 || IconIndex.size() > 100)
+    {
+        DEBUG_LOG("WORLD: CMSG_GUILD_BANK_UPDATE_TAB refused, name %zu / icon %zu bytes exceeds storage",
+                  Name.size(), IconIndex.size());
         return;
     }
 
@@ -1915,7 +1947,61 @@ void WorldSession::HandleGuildBankUpdateTab(WorldPacket& recv_data)
     }
 
     pGuild->SetGuildBankTabInfo(TabId, Name, IconIndex);
-    pGuild->DisplayGuildBankTabsInfo(this, TabId);
+
+    // Every online member is told, not just the actor. A tab name is shared
+    // state, and a rename only its author can see leaves everyone else reading a
+    // stale label until they reopen the bank.
+    //
+    // 0x0BF1 carries this. Two earlier versions of this comment claimed nothing
+    // confirmed that, reasoning from the absence of any capture at 18414 and from
+    // the fork-sourced name in Opcodes.h. Both were wrong, because neither asked
+    // the client. Its INBOUND parser settles it: sub_6A224B reads exactly the
+    // shape BuildGuildBankTabModified writes, and sub_96ED66 takes the result,
+    // sanitises the name through the same 16-character limiter the outbound path
+    // uses, stores both strings in the tab cache at 0x11F4140, and raises event
+    // 0x1AF. The step that binds the VALUE to that parser -- the guild SMSG
+    // dispatcher sub_68EC4C and its two tables -- is spelled out on the opcode's
+    // own line in Opcodes.h, because it is the part a re-derivation cannot guess:
+    // sub_6A224B holds no opcode literal, and the only push 0xbf1 in the image is
+    // an FMOD line number. (Not Opcodes_reference.h: its rows are generated and
+    // carry only the status overlay.) Corpus silence is not evidence of absence
+    // when the binary itself can be asked.
+    ByteBuffer tabModified;
+    if (MopGuildBankPackets::BuildGuildBankTabModified(tabModified, TabId, Name, IconIndex))
+    {
+        WorldPacket modified(SMSG_GUILD_EVENT_BANK_TAB_MODIFIED, tabModified.size());
+        modified.append(tabModified.contents(), tabModified.size());
+        pGuild->BroadcastPacket(&modified);
+    }
+    else
+    {
+        // Unreachable behind the guards above. By this point the rename is applied
+        // in memory and its UPDATE has been QUEUED -- not committed: once the world
+        // has loaded, AllowAsyncTransactions is on and Database::Execute only hands
+        // the statement to the delay thread, whose result nobody checks. So what a
+        // silent skip here would cost is the notification, not the rename: every
+        // member, the actor included, would hold the old name until they reopened
+        // the bank, with nothing in the log to explain it.
+        sLog.outError("CMSG_GUILD_BANK_UPDATE_TAB: guild %u tab %u renamed but the "
+            "event body was refused; members will hold a stale name until they reopen",
+            GuildId, uint32(TabId));
+    }
+
+    // No bank list follows. The inherited handler sent one, and an earlier
+    // version of this comment justified keeping it by claiming the event only
+    // refreshed cached metadata while the list did the repainting. That is
+    // backwards. Event 0x1AF is GUILDBANK_UPDATE_TABS, and its handler at
+    // Blizzard_GuildBankUI.lua:125 calls GuildBankFrame_SelectAvailableTab(),
+    // which calls GuildBankFrame_UpdateTabs() and GuildBankFrame_Update() on
+    // every path -- so the event repaints the frame by itself, from the tab
+    // cache sub_96ED66 has just written. BroadcastPacket includes the actor, so
+    // the renamer is repainted by the same packet as everyone else.
+    //
+    // A bank list additionally ships every slot of the tab, which a rename has
+    // not changed. There is no capture of this exchange at 18414 to say what
+    // retail sends, so the choice is between a send that is provably sufficient
+    // and one that is merely inherited; keeping the extra list would be assuming
+    // evidence rather than having it.
 }
 
 void WorldSession::HandleGuildBankLogQuery(WorldPacket& recv_data)

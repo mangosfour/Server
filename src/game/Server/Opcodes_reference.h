@@ -175,9 +175,9 @@
  *   TOTAL SMSG rows                   925
  *
  * SUBSYSTEM CONFIDENCE: high=365, low=221, medium=182, none=157
- * STATUS TOTALS (excludes 3 shared MSG aliases): ACTIVE=662, DOC=420, DORMANT=435
- *   SMSG: ACTIVE=364, DOC=270, DORMANT=290
- *   CMSG: ACTIVE=298, DOC=150, DORMANT=145
+ * STATUS TOTALS (excludes 3 shared MSG aliases): ACTIVE=668, DOC=420, DORMANT=429
+ *   SMSG: ACTIVE=366, DOC=270, DORMANT=288
+ *   CMSG: ACTIVE=302, DOC=150, DORMANT=141
  */
 
 // CAVEATS -- read before trusting any single row:
@@ -568,7 +568,7 @@ typedef uint16_t uint16;
  *   SMSG_GUILD_MEMBER_UPDATE_NOTE                  0x0BE1  DOC      [low-conf]
  *   SMSG_UNKNOWN_0x0BE9                            0x0BE9  DOC      [low-conf]
  *   SMSG_GUILD_MEMBERS_FOR_RECIPE                  0x0BF0  DORMANT  [low-conf]
- *   SMSG_GUILD_EVENT_BANK_TAB_MODIFIED             0x0BF1  DORMANT  [low-conf]
+ *   SMSG_GUILD_EVENT_BANK_TAB_MODIFIED             0x0BF1  ACTIVE   [low-conf]
  *   SMSG_GUILD_EVENT_PLAYER_LEFT                   0x0BF8  ACTIVE   [low-conf]
  *   SMSG_UNKNOWN_0x0E69                            0x0E69  ACTIVE   [low-conf]  server-binding=SMSG_GUILD_EVENT_NEW_LEADER
  *   SMSG_GUILD_RENAMED                             0x0E70  DORMANT  [low-conf]
@@ -1549,7 +1549,7 @@ typedef uint16_t uint16;
  *   CMSG_QUESTLOG_REMOVE_QUEST                     0x0779  ACTIVE
  *   CMSG_GET_MAIL_LIST                             0x077A  ACTIVE
  *   CMSG_MAIL_QUERY_NEXT_TIME                      0x077B  ACTIVE
- *   CMSG_GUILD_BANK_UPDATE_TAB                     0x07C2  DORMANT
+ *   CMSG_GUILD_BANK_UPDATE_TAB                     0x07C2  ACTIVE
  *   CMSG_QUESTGIVER_CHOOSE_REWARD                  0x07CB  ACTIVE
  *   CMSG_PET_ABANDON                               0x07D0  DORMANT
  *   CMSG_TEXT_EMOTE                                0x07E9  ACTIVE

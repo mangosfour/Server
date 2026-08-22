@@ -269,6 +269,19 @@ void Guild::CreateNewBankTab()
 
 void Guild::SetGuildBankTabInfo(uint8 TabId, std::string Name, std::string Icon)
 {
+    // TabId reaches here straight off the wire (CMSG_GUILD_BANK_UPDATE_TAB), and
+    // the only thing standing between it and this operator[] is the caller's
+    // range check. Guard in-function too, as GetBankRights below does (it bounds
+    // against the GUILD_BANK_MAX_TABS constant rather than a container size, so
+    // the parallel is the practice, not the bound). An out-of-range TabId is not
+    // a bad name: operator[] past the end is undefined behaviour, and the code
+    // below both dereferences the pointer it yields and assigns Name and Icon
+    // through it -- so the consequence is unbounded, not a mere stray read.
+    if (TabId >= m_TabListMap.size())
+    {
+        return;
+    }
+
     if (m_TabListMap[TabId]->Name == Name && m_TabListMap[TabId]->Icon == Icon)
     {
         return;

@@ -1180,6 +1180,163 @@ namespace MopCompactPackets
         return true;
     }
 
+    /// CMSG_GUILD_BANK_UPDATE_TAB (0x07C2) -- thunk sub_686A1D, vtable 0xD64874
+    /// with the 0x00C84A3D signature in slot +12, body writer sub_68B694.
+    ///
+    /// The tab id leads as a plain byte. Then a bit stream that interleaves the
+    /// bank GUID's presence mask with BOTH string lengths, and only afterwards
+    /// the byte section, where the two strings sit between GUID bytes rather
+    /// than after them. It comes to exactly 24 bits, so the client's flush adds
+    /// no padding and the body is byte-aligned from the tab id onwards.
+    ///
+    /// Which string is which is NOT decidable from the writer. It emits two
+    /// variable-length strings and nothing on the wire labels either. The Lua
+    /// binding settles it: sub_96F6DE is SetGuildBankTabInfo(tab, name,
+    /// iconFileName), and it calls sub_96EFA2(tab, name, icon), which stores the
+    /// name at object +0x11 and the icon path at +0x60. The writer gives +0x11 a
+    /// 7-bit length and +0x60 a 9-bit one, which fits those two fields and would
+    /// not fit them reversed.
+    ///
+    /// The caps below are the client's copy limits, not the bit fields' ranges:
+    /// 7 bits would allow 127 and 9 would allow 511, but the client cannot emit
+    /// more than it copies. Both copy loops are the same shape -- count down from
+    /// a limit, then write the terminator wherever the pointer stopped -- so the
+    /// limit is the maximum strlen, NOT one less than it: the name loop at
+    /// 0x96F037 runs from 0x40 and permits 64, and the icon loop at 0x96F05F runs
+    /// from 0x100 and permits 256. Anything longer did not come from a stock
+    /// client. (Both are far above what is reachable in practice -- the name is
+    /// sanitised at 0x96EFB8 before it is even copied -- sub_CBCC7F terminates as
+    /// its count REACHES 16, so 15 characters survive, which the client's own
+    /// Blizzard_GuildBankUI.xml confirms with letters="15" -- and the icon is a
+    /// bare macro filename -- but a reader that refused a body the
+    /// client can legitimately produce would be the worse error.)
+    ///
+    /// The 9-bit length is written as a whole byte (sub_665185) followed by one
+    /// bit (sub_665157), high part first, so it reassembles as (hi << 1) | lo.
+    ///
+    /// No capture of this opcode exists at build 18414 under catalogue
+    /// generation 2BE10C89...88752, so this layout has never met a real body.
+    /// The fixture covering it is synthetic and encoded from the writer above,
+    /// not from this reader.
+    inline bool ReadGuildBankUpdateTab(WorldPacket& in, uint8& tabId,
+        std::string& name, std::string& icon, ObjectGuid& bankGuid)
+    {
+        size_t const remaining = in.size() - in.rpos();
+        if (remaining < 4)                                  // tab id plus 24 mask bits
+        {
+            in.rfinish();
+            return false;
+        }
+
+        uint8 parsedTab = 0;
+        in >> parsedTab;
+
+        // Mask bits and the two lengths share one stream, in the writer's order:
+        // guid[5], the 9-bit icon length, the remaining seven mask bits, then the
+        // 7-bit name length.
+        uint8 guid[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+        uint8 const maskTail[] = { 1, 4, 2, 7, 0, 6, 3 };
+        in.ResetBitReader();
+        guid[5] = in.ReadBit();
+        uint32 const iconHigh = in.ReadBits(8);
+        uint32 const iconLow = in.ReadBits(1);
+        uint32 const iconLength = (iconHigh << 1) | iconLow;
+        for (uint8 index = 0; index < 7; ++index)
+        {
+            guid[maskTail[index]] = in.ReadBit();
+        }
+        uint32 const nameLength = in.ReadBits(7);
+
+        // The client's own limits. Deliberately literals rather than
+        // MopGuildBankPackets::MAX_TAB_*_BYTES: this header cannot include that one
+        // without dragging its dependencies into everything that includes Unit.h.
+        // They must stay in step all the same -- they were 255 and 256 for a while,
+        // and that skew is what a review caught, so change both or neither.
+        if (iconLength > 256 || nameLength > 64)
+        {
+            in.rfinish();
+            return false;
+        }
+
+        uint8 present[8];
+        size_t guidByteCount = 0;
+        for (uint8 index = 0; index < 8; ++index)
+        {
+            present[index] = guid[index];
+            guidByteCount += guid[index] ? 1 : 0;
+        }
+        if (remaining != 4 + guidByteCount + iconLength + nameLength)
+        {
+            in.rfinish();
+            return false;
+        }
+
+        // guid[7], guid[4], icon, guid[5], guid[1], guid[0], name, guid[2],
+        // guid[3], guid[6] -- the strings are not NUL terminated.
+        uint8 const beforeIcon[] = { 7, 4 };
+        uint8 const betweenStrings[] = { 5, 1, 0 };
+        uint8 const afterName[] = { 2, 3, 6 };
+        for (uint8 index = 0; index < 2; ++index)
+        {
+            in.ReadByteSeq(guid[beforeIcon[index]]);
+        }
+        // Parsed into locals, not the caller's out-params: two checks remain
+        // below, and a reader that rejects a body must leave every out-param
+        // untouched, the way the buy-tab and money readers do.
+        std::string parsedIcon = in.ReadString(iconLength);
+        for (uint8 index = 0; index < 3; ++index)
+        {
+            in.ReadByteSeq(guid[betweenStrings[index]]);
+        }
+        std::string parsedName = in.ReadString(nameLength);
+        for (uint8 index = 0; index < 3; ++index)
+        {
+            in.ReadByteSeq(guid[afterName[index]]);
+        }
+
+        // Neither string may carry an embedded NUL. The client's writer takes both
+        // lengths from strlen, so it cannot emit one; and downstream they stop
+        // being length-delimited -- Guild::SetGuildBankTabInfo stores them in a
+        // std::string but the reload path hands the column back as a C string, so
+        // "A\0B" would come back as "A" and memory would disagree with the
+        // database. It also defeats the handler's own non-empty policy: a name of
+        // one NUL byte is non-empty to size(), and empty to every downstream
+        // C-string consumer and to whatever survives a reload.
+        if (parsedName.find('\0') != std::string::npos ||
+            parsedIcon.find('\0') != std::string::npos)
+        {
+            in.rfinish();
+            return false;
+        }
+
+        uint64 raw = 0;
+        for (uint8 index = 0; index < 8; ++index)
+        {
+            // A byte the mask called present cannot decode to zero: the client
+            // marks a zero byte absent, so 0x01 on the wire (which XORs to 0) is
+            // a body no stock client produces. Checked per byte rather than by
+            // scanning the tail, because the two strings sit inside that tail
+            // and may legitimately contain 0x01.
+            if (present[index] && guid[index] == 0)
+            {
+                in.rfinish();
+                return false;
+            }
+            raw |= uint64(guid[index]) << (8 * index);
+        }
+        if (raw == 0 || in.rpos() != in.size())
+        {
+            in.rfinish();
+            return false;
+        }
+
+        tabId = parsedTab;
+        name = parsedName;
+        icon = parsedIcon;
+        bankGuid = ObjectGuid(raw);
+        return true;
+    }
+
     /// A plain byte, then one mask byte, then the present bytes of a packed
     /// eight-byte value. Two unrelated opcodes share this exact shape at 18414
     /// and differ only in their orders, so the walk is written once.

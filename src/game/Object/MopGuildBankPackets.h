@@ -19,7 +19,28 @@ namespace MopGuildBankPackets
     static size_t const MAX_ITEM_COUNT = 98;
     static size_t const MAX_SOCKET_ENCHANT_COUNT = 3;
     static size_t const MAX_TAB_NAME_BYTES = 64;
-    static size_t const MAX_TAB_ICON_BYTES = 255;
+    // A hard client-buffer bound, not merely a copy limit. In the inbound parser's
+    // record sub_6A224B puts the icon at +0x14 and the name at +0x115, so the icon
+    // field is exactly 0x101 = 256 bytes plus its terminator -- while the 9-bit
+    // length that precedes it could carry 511. The copy loops agree: 0x96F05F
+    // outbound and the one in sub_96ED66 both count down from 0x100 and write the
+    // terminator wherever the pointer stopped, so 256 bytes survive intact.
+    //
+    // This was 255, one below the real bound and one away from the reader in
+    // MopCompactPackets. That difference IS observable, and not only through the
+    // rename path this constant was added for: Guild::DisplayGuildBankContent
+    // truncates every tab icon against it before BuildListBody ever sees one, so
+    // it governs every bank list the server sends. An icon longer than 255 bytes
+    // can reach that truncation without ever passing the 100-byte handler guard,
+    // because LoadGuildBankFromDB reads TabIcon straight out of a utf8 varchar(100)
+    // -- 100 characters, so as much as 300 bytes -- with no length check at all.
+    // At 255 TruncateUtf8 cut such a value on the way to every client -- by one
+    // byte for the ASCII macro filenames the stock UI sends, by more where the cut
+    // landed inside a multi-byte sequence and it backed up to the lead byte.
+    //
+    // Keep this in step with MopCompactPackets::ReadGuildBankUpdateTab if either
+    // ever moves; they mirror the same client limit and cannot be edited apart.
+    static size_t const MAX_TAB_ICON_BYTES = 256;
     static size_t const MAX_POST_CRYPT_PAYLOAD_BYTES = 0x7FFFF;
 
     struct SocketEnchant
@@ -210,6 +231,51 @@ namespace MopGuildBankPackets
     inline void BuildGuildBankMoneyChanged(ByteBuffer& out, uint64 bankMoney)
     {
         out << uint64(bankMoney);
+    }
+
+    /// SMSG_GUILD_EVENT_BANK_TAB_MODIFIED (0x0BF1): one tab's new name and icon.
+    ///
+    /// Unusually for this campaign, this body comes from the client's INBOUND
+    /// parser rather than from a corpus capture -- there is no observation of
+    /// this opcode at 18414 in generation 2BE10C89...88752. The client's own
+    /// reader is the better oracle here anyway, and it is unambiguous:
+    ///
+    ///   sub_6A224B reads a 9-bit length (8 bits via sub_66529C, then 1 bit,
+    ///   combined as (hi << 1) | lo), then a 7-bit length (sub_6650D3) -- 16 bits
+    ///   exactly, so nothing is padded -- then the NAME bytes, then a uint32 tab
+    ///   id, then the ICON bytes. Both strings are raw; the parser NUL-terminates
+    ///   them itself after reading, so none is sent.
+    ///
+    /// Which length belongs to which string is fixed by where the parser puts
+    /// them: the 7-bit length reads into the record at +0x115 and the 9-bit one
+    /// into +0x14, and sub_96ED66 then takes those two, sanitises the +0x115
+    /// string through the SAME 16-character limiter the outbound
+    /// SetGuildBankTabInfo path uses (sub_CBCC7F with 0x10/0x41) and copies the
+    /// +0x14 string under the same 256-byte limit, into the client's tab cache at
+    /// 0x11F4140 with stride 0x2148, before raising event 0x1AF. So the 7-bit
+    /// field is the name and the 9-bit field is the icon, exactly as in the
+    /// request -- see MopCompactPackets::ReadGuildBankUpdateTab.
+    ///
+    /// Note the order differs from the request: here the NAME bytes come first
+    /// and the tab id sits BETWEEN the two strings.
+    inline bool BuildGuildBankTabModified(ByteBuffer& out, uint32 tabId,
+        std::string const& name, std::string const& icon)
+    {
+        if (tabId >= MAX_TAB_COUNT ||
+                name.size() > MAX_TAB_NAME_BYTES ||
+                icon.size() > MAX_TAB_ICON_BYTES)
+        {
+            return false;
+        }
+
+        out.WriteBits(uint32(icon.size()), 9);
+        out.WriteBits(uint32(name.size()), 7);
+        out.FlushBits();                                    // 16 bits: adds nothing
+
+        out.append(name.data(), name.size());
+        out << uint32(tabId);
+        out.append(icon.data(), icon.size());
+        return true;
     }
 
 }
