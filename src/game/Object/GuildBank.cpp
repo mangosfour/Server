@@ -227,6 +227,61 @@ void Guild::DisplayGuildBankContentUpdate(uint8 TabId, GuildItemPosCountVec cons
     DEBUG_LOG("WORLD: Sent (SMSG_GUILD_BANK_LIST)");
 }
 
+/// Every item mutation below moves the item in memory first and writes the rows
+/// inside a transaction. All nine of those commits used to throw their result
+/// away, and a failure here is not benign: the item has already moved in memory
+/// and its Item state is already back to unchanged, so a rollback leaves the
+/// bank holding one arrangement and the database another, with nothing to say so.
+///
+/// It must be CommitTransactionDirect. The plain CommitTransaction only queues
+/// once the world has loaded -- AllowAsyncTransactions is on from Master.cpp --
+/// handing the statements to the delay thread and returning true before MySQL
+/// has seen them, and the delay thread discards the result. A first version of
+/// this helper called it and claimed to report whether the write landed; it
+/// could not have, and would have reported success for every failure there is.
+///
+/// A false return is ambiguous in the usual way: the statements may have rolled
+/// back, or the COMMIT may have applied with only its result unreadable. Unlike
+/// the money paths there is no small set of balances to re-read -- and as the
+/// tab-purchase path already reasons, correcting item state in memory is the
+/// part that cannot be done safely, since undoing a mutation whose commit
+/// actually landed creates the inverse phantom. So this does not guess.
+///
+/// Marking the bank untrusted is necessary but NOT sufficient on its own. For a
+/// withdrawal the player is already holding the item in memory, and that flag
+/// only stops further BANK packets -- it does nothing about using, trading or
+/// mailing what they now hold. So the session is quarantined the way
+/// WorldSession::SuppressCharacterSave documents: refuse to persist the
+/// character's in-memory state, then disconnect, so the reconnect loads whatever
+/// the database actually holds. Losing unsaved progress is the cheaper error.
+bool Guild::CommitBankMutation(Player* pl, char const* context)
+{
+    if (CharacterDatabase.CommitTransactionDirect())
+    {
+        return true;
+    }
+
+    MarkBankStateUntrusted();
+
+    if (WorldSession* session = pl ? pl->GetSession() : NULL)
+    {
+        session->SuppressCharacterSave();
+        sLog.outError("Guild::%s: commit could not be confirmed for player %u and guild %u. "
+            "Items may have moved in memory without reaching the database, so the bank is "
+            "untrusted until reload and this character's state is discarded rather than saved.",
+            context, pl->GetGUIDLow(), m_Id);
+        session->KickPlayer();
+    }
+    else
+    {
+        sLog.outError("Guild::%s: commit could not be confirmed for guild %u and no session "
+            "was available to quarantine; the bank is untrusted until it is reloaded.",
+            context, m_Id);
+    }
+
+    return false;
+}
+
 Item* Guild::GetItem(uint8 TabId, uint8 SlotId)
 {
     if (TabId >= GetPurchasedTabs() || SlotId >= GUILD_BANK_MAX_SLOTS)
@@ -1283,20 +1338,34 @@ void Guild::SwapItems(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 BankTa
 
     Item* pItemDst = GetItem(BankTabDst, BankTabSlotDst);
 
+    // Rights are checked on EVERY move, not only on one that crosses tabs. Both
+    // checks below used to sit behind `BankTab != BankTabDst`, which left a
+    // same-tab rearrange with no permission check whatsoever -- and same-tab is
+    // the ordinary case rather than a corner one: every bank-to-bank body decoded
+    // from the corpus at build 18414 moves within a single tab. A forged client could
+    // therefore merge, split and reorder items in any purchased tab, including a
+    // tab its rank cannot so much as view. The real client never sends that,
+    // which is exactly why the gap survived: its producer checks the destination
+    // tab's deposit permission before it will build the packet at all.
+    if (!IsMemberHaveRights(pl->GetGUIDLow(), BankTabDst, GUILD_BANK_RIGHT_DEPOSIT_ITEM))
+    {
+        return;
+    }
+
+    // The source side is a withdrawal only when the item leaves its tab. Within
+    // one tab nothing leaves the guild, so require sight of the tab but do not
+    // spend the member's daily allowance on tidying it -- otherwise a member who
+    // had used up their withdrawals could not reorder a tab they can see.
     if (BankTab != BankTabDst)
     {
-        // check dest pos rights (if different tabs)
-        if (!IsMemberHaveRights(pl->GetGUIDLow(), BankTabDst, GUILD_BANK_RIGHT_DEPOSIT_ITEM))
+        if (GetMemberSlotWithdrawRem(pl->GetGUIDLow(), BankTab) == 0)
         {
             return;
         }
-
-        // check source pos rights (if different tabs)
-        uint32 remRight = GetMemberSlotWithdrawRem(pl->GetGUIDLow(), BankTab);
-        if (remRight <= 0)
-        {
-            return;
-        }
+    }
+    else if (!IsMemberHaveRights(pl->GetGUIDLow(), BankTab, GUILD_BANK_RIGHT_VIEW_TAB))
+    {
+        return;
     }
 
     if (SplitedAmount)
@@ -1329,7 +1398,22 @@ void Guild::SwapItems(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 BankTa
         pItemSrc->FSetState(ITEM_CHANGED);
         pItemSrc->SaveToDB();                               // not in inventory and can be save standalone
         StoreItem(BankTabDst, dest, pNewItem);
-        CharacterDatabase.CommitTransaction();
+
+        // Spend the allowance the check above tested. It used to be tested and
+        // never spent, so a member with a single withdrawal left could relay any
+        // number of items out of a restricted tab into one with looser rights and
+        // draw them from there -- the source tab's configured daily limit only
+        // ever had to be non-zero, never sufficient. MoveFromBankToChar has
+        // always consumed it this way; this path simply did not.
+        if (BankTab != BankTabDst)
+        {
+            MemberItemWithdraw(BankTab, pl->GetGUIDLow());
+        }
+
+        if (!CommitBankMutation(pl, "SwapItems"))
+        {
+            return;
+        }
     }
     else                                                    // non split
     {
@@ -1346,7 +1430,16 @@ void Guild::SwapItems(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 BankTa
 
             RemoveItem(BankTab, BankTabSlot);
             StoreItem(BankTabDst, gDest, pItemSrc);
-            CharacterDatabase.CommitTransaction();
+
+            if (BankTab != BankTabDst)                      // see the split branch
+            {
+                MemberItemWithdraw(BankTab, pl->GetGUIDLow());
+            }
+
+            if (!CommitBankMutation(pl, "SwapItems"))
+            {
+                return;
+            }
         }
         else                                                // swap
         {
@@ -1394,7 +1487,20 @@ void Guild::SwapItems(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 BankTa
             RemoveItem(BankTabDst, BankTabSlotDst);
             StoreItem(BankTab, gSrc, pItemDst);
             StoreItem(BankTabDst, gDest, pItemSrc);
-            CharacterDatabase.CommitTransaction();
+
+            // A cross-tab swap takes an item OUT of both tabs, and the checks
+            // above already tested both allowances, so spend both. Same tab, and
+            // nothing has left the guild at all.
+            if (BankTab != BankTabDst)
+            {
+                MemberItemWithdraw(BankTab, pl->GetGUIDLow());
+                MemberItemWithdraw(BankTabDst, pl->GetGUIDLow());
+            }
+
+            if (!CommitBankMutation(pl, "SwapItems"))
+            {
+                return;
+            }
         }
     }
     DisplayGuildBankContentUpdate(BankTab, BankTabSlot, BankTab == BankTabDst ? BankTabSlotDst : -1);
@@ -1461,7 +1567,10 @@ void Guild::MoveFromBankToChar(Player* pl, uint8 BankTab, uint8 BankTabSlot, uin
         pl->SaveInventoryAndGoldToDB();
 
         MemberItemWithdraw(BankTab, pl->GetGUIDLow());
-        CharacterDatabase.CommitTransaction();
+        if (!CommitBankMutation(pl, "MoveFromBankToChar"))
+        {
+            return;
+        }
     }
     else                                                    // Bank -> Char swap with slot (move)
     {
@@ -1484,7 +1593,10 @@ void Guild::MoveFromBankToChar(Player* pl, uint8 BankTab, uint8 BankTabSlot, uin
             pl->SaveInventoryAndGoldToDB();
 
             MemberItemWithdraw(BankTab, pl->GetGUIDLow());
-            CharacterDatabase.CommitTransaction();
+            if (!CommitBankMutation(pl, "MoveFromBankToChar"))
+            {
+                return;
+            }
         }
         else                                                // Bank <-> Char swap items
         {
@@ -1560,7 +1672,10 @@ void Guild::MoveFromBankToChar(Player* pl, uint8 BankTab, uint8 BankTabSlot, uin
             pl->SaveInventoryAndGoldToDB();
 
             MemberItemWithdraw(BankTab, pl->GetGUIDLow());
-            CharacterDatabase.CommitTransaction();
+            if (!CommitBankMutation(pl, "MoveFromBankToChar"))
+            {
+                return;
+            }
         }
     }
     DisplayGuildBankContentUpdate(BankTab, BankTabSlot);
@@ -1632,7 +1747,10 @@ void Guild::MoveFromCharToBank(Player* pl, uint8 PlayerBag, uint8 PlayerSlot, ui
         pItemChar->SetState(ITEM_CHANGED);
         pl->SaveInventoryAndGoldToDB();
         StoreItem(BankTab, dest, pNewItem);
-        CharacterDatabase.CommitTransaction();
+        if (!CommitBankMutation(pl, "MoveFromCharToBank"))
+        {
+            return;
+        }
 
         DisplayGuildBankContentUpdate(BankTab, dest);
     }
@@ -1659,7 +1777,10 @@ void Guild::MoveFromCharToBank(Player* pl, uint8 PlayerBag, uint8 PlayerSlot, ui
 
             StoreItem(BankTab, dest, pItemChar);
             pl->SaveInventoryAndGoldToDB();
-            CharacterDatabase.CommitTransaction();
+            if (!CommitBankMutation(pl, "MoveFromCharToBank"))
+            {
+                return;
+            }
 
             DisplayGuildBankContentUpdate(BankTab, dest);
         }
@@ -1727,7 +1848,10 @@ void Guild::MoveFromCharToBank(Player* pl, uint8 PlayerBag, uint8 PlayerSlot, ui
             {
                 MemberItemWithdraw(BankTab, pl->GetGUIDLow());
             }
-            CharacterDatabase.CommitTransaction();
+            if (!CommitBankMutation(pl, "MoveFromCharToBank"))
+            {
+                return;
+            }
 
             DisplayGuildBankContentUpdate(BankTab, gDest);
         }

@@ -1656,6 +1656,15 @@ class Guild
         /// for good. Only a reload of the guild clears the flag.
         bool   IsBankStateTrusted() const { return m_bankStateTrusted; }
         void   MarkBankStateUntrusted() { m_bankStateTrusted = false; }
+
+        /// Commits an item mutation SYNCHRONOUSLY and reports whether the
+        /// database accepted it -- CommitTransactionDirect, never the queuing
+        /// CommitTransaction, which returns true before MySQL has seen anything.
+        /// A false return means memory and the durable rows may now disagree: it
+        /// marks the bank untrusted AND quarantines the player's session, and
+        /// every caller must abandon the operation without broadcasting. See the
+        /// commentary on the definition in GuildBank.cpp.
+        bool   CommitBankMutation(Player* pl, char const* context);
         // per days
         bool   MemberItemWithdraw(uint8 TabId, uint32 LowGuid);
         uint32 GetMemberSlotWithdrawRem(uint32 LowGuid, uint8 TabId);

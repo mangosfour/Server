@@ -1337,6 +1337,164 @@ namespace MopCompactPackets
         return true;
     }
 
+    /// One CMSG_GUILD_BANK_SWAP_ITEMS body, as the 18414 client builds it.
+    ///
+    /// Absent fields are left at the sentinels the client's own constructor
+    /// (sub_686794) uses, so "absent" and "zero" stay distinguishable: srcTab is
+    /// 0xFF when there is no bank-side source, and the rest are zero.
+    struct GuildBankSwapItems
+    {
+        ObjectGuid bankGuid;                                // +0x30, packed
+        uint32 splitAmount;                                 // +0x18, 0 = whole stack
+        uint32 entryAtBankSlot;                             // +0x20, 0 = that slot is empty
+        uint32 srcEntry;                                    // +0x28, entry at (srcTab, srcSlot)
+        uint32 autoStoreCount;                              // +0x1c, full stack size
+        uint8  bankTab;                                     // +0x14
+        uint8  bankSlot;                                    // +0x26, 0xFF = anywhere in tab
+        uint8  toChar;                                      // +0x25, 1 = bank -> player
+        uint8  playerBag;                                   // +0x10, 0xFF = backpack
+        uint8  playerSlot;                                  // +0x24
+        uint8  srcTab;                                      // +0x12, 0xFF = none
+        uint8  srcSlot;                                     // +0x13
+        bool   autoStore;                                   // +0x11
+        bool   bankToBank;                                  // +0x2c
+    };
+
+    /// CMSG_GUILD_BANK_SWAP_ITEMS (0x136A) -- thunk sub_6865DF, vtable 0xD648EC
+    /// with the 0x00C84A3D signature in slot +12, body writer sub_68A2FD.
+    ///
+    /// FOUR different player actions build this one opcode, with different
+    /// subsets of the fields set, so the server must dispatch on the flags rather
+    /// than assume a shape. The inherited handler read a raw GUID first and then
+    /// branched on a plain BankToBank byte; at 18414 neither of those is where it
+    /// thought, and both flags live in the bit stream.
+    ///
+    /// Eleven plain bytes lead, then a 16-bit stream, then the packed GUID and
+    /// six optional scalars. Six of those sixteen bits are INVERTED presence --
+    /// the bit is SET when the field is absent -- because the writer emits
+    /// `sete` on a comparison against the field's own "none" value. srcTab's
+    /// none-value is 0xFF; the other five use zero.
+    ///
+    /// The dangerous field pair: bankTab/bankSlot is NOT always the source. It is
+    /// the bank-side slot of the operation, which is the source for a withdrawal
+    /// but the DESTINATION for a bank-to-bank move, where the source is
+    /// srcTab/srcSlot. A reference fork naming these "BankTab" and "BankTabDst"
+    /// has them the other way round for that case.
+    ///
+    /// That moves the WRONG item; it does not duplicate one, and an earlier
+    /// version of this comment said it did. Guild::SwapItems reads its first pair
+    /// as the source, so with the pairs reversed a move into an empty slot finds
+    /// nothing there and returns, and a move between two occupied slots still
+    /// conserves both stacks. What you get is a silent no-op or an item dragged
+    /// the opposite way -- bad on an item path, but not a dupe.
+    ///
+    /// That was settled from the wire, not just the binary: querying the corpus
+    /// (generation 2BE10C89...88752) for bank-to-bank bodies whose entryAtBankSlot
+    /// is zero returns twelve packets -- capture-000188 seq 6613 and
+    /// capture-000192 seq 18440 among them -- in which bankTab/bankSlot names an
+    /// EMPTY slot while srcTab/srcSlot holds a real item. An empty slot cannot be
+    /// a source. Ordinary swaps are symmetric and cannot tell the two apart.
+    inline bool ReadGuildBankSwapItems(WorldPacket& in, GuildBankSwapItems& out)
+    {
+        size_t const remaining = in.size() - in.rpos();
+        if (remaining < 13)                                 // 11 plain bytes plus 16 mask bits
+        {
+            in.rfinish();
+            return false;
+        }
+
+        GuildBankSwapItems parsed;
+        parsed.srcTab = 0xFF;                               // the client's own "none"
+        parsed.srcSlot = 0;
+        parsed.playerBag = 0;
+        parsed.playerSlot = 0;
+        parsed.srcEntry = 0;
+        parsed.autoStoreCount = 0;
+
+        in >> parsed.splitAmount;                           // +0x18, written first
+        in >> parsed.bankSlot;                              // +0x26
+        in >> parsed.toChar;                                // +0x25
+        in >> parsed.entryAtBankSlot;                       // +0x20
+        in >> parsed.bankTab;                               // +0x14
+
+        uint8 guid[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+        bool absent[6] = { false, false, false, false, false, false };
+        enum { ABS_SRC_ENTRY, ABS_PLAYER_BAG, ABS_PLAYER_SLOT, ABS_SRC_SLOT, ABS_AUTOSTORE, ABS_SRC_TAB };
+
+        in.ResetBitReader();
+        guid[5]                  = in.ReadBit();
+        absent[ABS_SRC_TAB]      = in.ReadBit() != 0;
+        guid[1]                  = in.ReadBit();
+        absent[ABS_PLAYER_BAG]   = in.ReadBit() != 0;
+        parsed.autoStore         = in.ReadBit() != 0;
+        guid[0]                  = in.ReadBit();
+        absent[ABS_SRC_ENTRY]    = in.ReadBit() != 0;
+        absent[ABS_SRC_SLOT]     = in.ReadBit() != 0;
+        guid[2]                  = in.ReadBit();
+        parsed.bankToBank        = in.ReadBit() != 0;
+        guid[4]                  = in.ReadBit();
+        guid[7]                  = in.ReadBit();
+        guid[3]                  = in.ReadBit();
+        absent[ABS_PLAYER_SLOT]  = in.ReadBit() != 0;
+        guid[6]                  = in.ReadBit();
+        absent[ABS_AUTOSTORE]    = in.ReadBit() != 0;
+
+        uint8 present[8];
+        size_t guidByteCount = 0;
+        for (uint8 index = 0; index < 8; ++index)
+        {
+            present[index] = guid[index];
+            guidByteCount += guid[index] ? 1 : 0;
+        }
+
+        size_t const optionalBytes =
+            (absent[ABS_SRC_ENTRY]   ? 0 : 4) +
+            (absent[ABS_PLAYER_BAG]  ? 0 : 1) +
+            (absent[ABS_PLAYER_SLOT] ? 0 : 1) +
+            (absent[ABS_SRC_SLOT]    ? 0 : 1) +
+            (absent[ABS_AUTOSTORE]   ? 0 : 4) +
+            (absent[ABS_SRC_TAB]     ? 0 : 1);
+
+        if (remaining != 13 + guidByteCount + optionalBytes)
+        {
+            in.rfinish();
+            return false;
+        }
+
+        uint8 const byteOrder[] = { 2, 6, 5, 4, 0, 3, 1, 7 };
+        for (uint8 index = 0; index < 8; ++index)
+        {
+            in.ReadByteSeq(guid[byteOrder[index]]);
+        }
+
+        if (!absent[ABS_SRC_ENTRY])   { in >> parsed.srcEntry; }
+        if (!absent[ABS_PLAYER_BAG])  { in >> parsed.playerBag; }
+        if (!absent[ABS_PLAYER_SLOT]) { in >> parsed.playerSlot; }
+        if (!absent[ABS_SRC_SLOT])    { in >> parsed.srcSlot; }
+        if (!absent[ABS_AUTOSTORE])   { in >> parsed.autoStoreCount; }
+        if (!absent[ABS_SRC_TAB])     { in >> parsed.srcTab; }
+
+        uint64 raw = 0;
+        for (uint8 index = 0; index < 8; ++index)
+        {
+            if (present[index] && guid[index] == 0)         // 0x01 on the wire XORs to 0
+            {
+                in.rfinish();
+                return false;
+            }
+            raw |= uint64(guid[index]) << (8 * index);
+        }
+        if (raw == 0 || in.rpos() != in.size())
+        {
+            in.rfinish();
+            return false;
+        }
+
+        parsed.bankGuid = ObjectGuid(raw);
+        out = parsed;
+        return true;
+    }
+
     /// A plain byte, then one mask byte, then the present bytes of a packed
     /// eight-byte value. Two unrelated opcodes share this exact shape at 18414
     /// and differ only in their orders, so the walk is written once.

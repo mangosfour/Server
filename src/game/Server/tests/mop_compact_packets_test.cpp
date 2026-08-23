@@ -1187,6 +1187,7 @@ static void test_guild_bank_update_tab_round_trip()
         CHECK(rejectedIcon == "untouched");
     }
 }
+
 // The reader's own 64/256-byte limits, exercised AT the boundary.
 //
 // The vectors above are real shapes but short ones -- five name bytes and
@@ -1292,7 +1293,6 @@ static void test_guild_bank_update_tab_length_boundaries()
     }
 }
 
-
 static void test_guild_bank_tab_modified_body()
 {
     ByteBuffer body;
@@ -1333,6 +1333,146 @@ static void test_guild_bank_tab_modified_body()
     CHECK(MopGuildBankPackets::BuildGuildBankTabModified(
         atLimit, 7, std::string(MopGuildBankPackets::MAX_TAB_NAME_BYTES, 'n'),
         std::string(MopGuildBankPackets::MAX_TAB_ICON_BYTES, 'i')));
+}
+
+// CMSG_GUILD_BANK_SWAP_ITEMS, unlike its siblings, has real wire evidence: 125
+// PACKETS at build 18414, spread across many captures, under catalogue generation
+// 2BE10C89...88752. Every body below is a genuine retail packet rather than a
+// synthetic one, which makes this a stronger check than the update-tab fixture.
+//
+// It is not an unconditional check on the bit order, though, and an earlier
+// version of this comment claimed it was. Exact-size validation only catches a
+// mistake that CHANGES the size: permuting the GUID mask bits preserves their
+// popcount, and transposing two optional fields of equal width preserves the
+// total. What these vectors do pin down is every field's VALUE, which is the
+// part that matters here.
+//
+// The seven cover all four producer shapes and the whole observed size range
+// (20-25 bytes), including two bank-to-bank moves into an EMPTY destination. Those
+// two are the ones that prove which pair is the source: bankTab/bankSlot names a
+// slot holding nothing while srcTab/srcSlot holds a real item, and an empty slot
+// cannot be a source. Ordinary swaps are symmetric and cannot distinguish them.
+static void test_guild_bank_swap_items_real_captures()
+{
+    struct Vector
+    {
+        std::vector<uint8_t> body;
+        uint64 guid;
+        uint32 splitAmount;
+        uint32 entryAtBankSlot;
+        uint32 srcEntry;
+        uint32 autoStoreCount;
+        uint8  bankTab;
+        uint8  bankSlot;
+        uint8  toChar;
+        uint8  playerBag;
+        uint8  playerSlot;
+        uint8  srcTab;
+        uint8  srcSlot;
+        bool   autoStore;
+        bool   bankToBank;
+    };
+
+    std::vector<Vector> const vectors = {
+        // capture-000067 seq 550753 -- P3 deposit, player -> bank
+        { { 0x00, 0x00, 0x00, 0x00, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xE7, 0x37, 0x12, 0x43, 0x70, 0x11, 0x06, 0xF0, 0x13 },
+          UINT64_C(0xF113427100000710), 0, 0, 0, 0,
+          2, 97, 0, 19, 0, 255, 0,
+          false, false },
+
+        // capture-000033 seq 14266 -- P1 auto-store, bank -> player
+        { { 0x00, 0x00, 0x00, 0x00, 0x27, 0x01, 0x36, 0x29, 0x01, 0x00, 0x03, 0xFF, 0x36, 0x12, 0x43, 0x70, 0x11, 0x06, 0xF0, 0x05, 0x00, 0x00, 0x00 },
+          UINT64_C(0xF113427100000710), 0, 76086, 0, 5,
+          3, 39, 1, 0, 0, 255, 0,
+          true, false },
+
+        // capture-000059 seq 1695242 -- P2 bank -> player, named bag slot
+        { { 0x01, 0x00, 0x00, 0x00, 0x08, 0x01, 0x08, 0x56, 0x01, 0x00, 0x02, 0xE7, 0x33, 0x12, 0x43, 0x70, 0x11, 0x06, 0xF0, 0x15, 0x02 },
+          UINT64_C(0xF113427100000710), 1, 87560, 0, 0,
+          2, 8, 1, 21, 2, 255, 0,
+          false, false },
+
+        // capture-000112 seq 465086 -- P4 bank -> bank, source and destination equal
+        { { 0x03, 0x00, 0x00, 0x00, 0x36, 0x00, 0x89, 0x2B, 0x01, 0x00, 0x01, 0xB4, 0x77, 0x12, 0x43, 0x6F, 0xE1, 0x07, 0xF0, 0x89, 0x2B, 0x01, 0x00, 0x36, 0x01 },
+          UINT64_C(0xF113426E000006E0), 3, 76681, 76681, 0,
+          1, 54, 0, 0, 0, 1, 54,
+          false, true },
+
+        // capture-000067 seq 551446 -- P4 bank -> bank swap of two different items
+        { { 0x00, 0x00, 0x00, 0x00, 0x53, 0x00, 0x3A, 0x29, 0x01, 0x00, 0x02, 0xB4, 0x77, 0x12, 0x43, 0x70, 0x11, 0x06, 0xF0, 0x3C, 0x29, 0x01, 0x00, 0x50, 0x02 },
+          UINT64_C(0xF113427100000710), 0, 76090, 76092, 0,
+          2, 83, 0, 0, 0, 2, 80,
+          false, true },
+
+        // capture-000188 seq 6613 -- P4 into an EMPTY destination: proves the direction
+        { { 0x00, 0x00, 0x00, 0x00, 0x5C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xB4, 0x77, 0x12, 0x43, 0x71, 0xE7, 0x07, 0xF0, 0xE3, 0x23, 0x01, 0x00, 0x03, 0x02 },
+          UINT64_C(0xF1134270000006E6), 0, 0, 74723, 0,
+          2, 92, 0, 0, 0, 2, 3,
+          false, true },
+
+        // capture-000192 seq 18440 -- P4 into an EMPTY destination, second instance
+        { { 0x00, 0x00, 0x00, 0x00, 0x57, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xB4, 0x77, 0x12, 0x26, 0x0B, 0x23, 0x05, 0xF0, 0x7C, 0x2B, 0x01, 0x00, 0x06, 0x01 },
+          UINT64_C(0xF113270A00000422), 0, 0, 76668, 0,
+          1, 87, 0, 0, 0, 1, 6,
+          false, true },
+    };
+
+    for (Vector const& vector : vectors)
+    {
+        WorldPacket packet = InputPacket(CMSG_GUILD_BANK_SWAP_ITEMS, vector.body);
+        MopCompactPackets::GuildBankSwapItems parsed;
+        CHECK(MopCompactPackets::ReadGuildBankSwapItems(packet, parsed));
+        CHECK(parsed.bankGuid.GetRawValue() == vector.guid);
+        CHECK(parsed.splitAmount == vector.splitAmount);
+        CHECK(parsed.entryAtBankSlot == vector.entryAtBankSlot);
+        CHECK(parsed.srcEntry == vector.srcEntry);
+        CHECK(parsed.autoStoreCount == vector.autoStoreCount);
+        CHECK(parsed.bankTab == vector.bankTab);
+        CHECK(parsed.bankSlot == vector.bankSlot);
+        CHECK(parsed.toChar == vector.toChar);
+        CHECK(parsed.playerBag == vector.playerBag);
+        CHECK(parsed.playerSlot == vector.playerSlot);
+        CHECK(parsed.srcTab == vector.srcTab);
+        CHECK(parsed.srcSlot == vector.srcSlot);
+        CHECK(parsed.autoStore == vector.autoStore);
+        CHECK(parsed.bankToBank == vector.bankToBank);
+        CHECK(packet.rpos() == packet.size());
+    }
+
+    // The direction claim, asserted directly rather than left implicit in the
+    // table above: in both empty-destination captures the bank-side pair is empty
+    // and the source pair is not.
+    for (size_t index = 5; index <= 6; ++index)
+    {
+        CHECK(vectors[index].bankToBank);
+        CHECK(vectors[index].entryAtBankSlot == 0);
+        CHECK(vectors[index].srcEntry != 0);
+    }
+
+    std::vector<uint8_t> const& body = vectors[6].body;
+    std::vector<std::vector<uint8_t>> malformed;
+    for (size_t size = 0; size < body.size(); ++size)
+    {
+        malformed.emplace_back(body.begin(), body.begin() + size);
+    }
+    std::vector<uint8_t> trailing = body;
+    trailing.push_back(0x00);
+    malformed.push_back(trailing);
+
+    // A GUID byte the mask called present but which XORs to zero.
+    std::vector<uint8_t> zeroed = body;
+    zeroed[13] = 0x01;
+    malformed.push_back(zeroed);
+
+    for (std::vector<uint8_t> const& bad : malformed)
+    {
+        WorldPacket rejected = InputPacket(CMSG_GUILD_BANK_SWAP_ITEMS, bad);
+        MopCompactPackets::GuildBankSwapItems parsed;
+        parsed.bankGuid = ObjectGuid(UINT64_C(0xFFFFFFFFFFFFFFFF));
+        CHECK(!MopCompactPackets::ReadGuildBankSwapItems(rejected, parsed));
+        CHECK(rejected.rpos() == rejected.size());
+        CHECK(parsed.bankGuid.GetRawValue() == UINT64_C(0xFFFFFFFFFFFFFFFF));
+    }
 }
 
 static void test_combo_points_packet()
@@ -2596,6 +2736,7 @@ int main(int /*argc*/, char** /*argv*/)
     test_guild_bank_update_tab_round_trip();
     test_guild_bank_update_tab_length_boundaries();
     test_guild_bank_tab_modified_body();
+    test_guild_bank_swap_items_real_captures();
     test_combo_points_packet();
     test_instance_reset_result_bodies();
 

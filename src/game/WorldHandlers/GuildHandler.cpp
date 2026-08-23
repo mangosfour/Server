@@ -1600,128 +1600,117 @@ void WorldSession::HandleGuildBankSwapItems(WorldPacket& recv_data)
 {
     DEBUG_LOG("WORLD: Received (CMSG_GUILD_BANK_SWAP_ITEMS)");
 
-    // Closed ahead of this opcode being registered, because the consequence is
-    // permanent. A tab purchase whose commit could not be confirmed can leave a
-    // tab in memory with no guild_bank_tab row; storing an item into it writes a
-    // guild_bank_item row with a TabId that LoadGuildBankFromDB then drops, and
-    // the item is gone for good. Refuse while the bank state is untrusted.
-    if (Guild* untrustedGuild = sGuildMgr.GetGuildById(GetPlayer()->GetGuildId()))
+    // FOUR player actions build this one opcode, and at 18414 they are four
+    // different bodies -- 20, 21, 23 and 25 bytes are all observed at that build.
+    // The inherited code read a raw GUID first and then branched on a plain
+    // BankToBank byte; neither is where it thought, and both flags now live in
+    // the bit stream, so the shape has to come out of the reader.
+    MopCompactPackets::GuildBankSwapItems req;
+    if (!MopCompactPackets::ReadGuildBankSwapItems(recv_data, req))
     {
-        if (!untrustedGuild->IsBankStateTrusted())
-        {
-            sLog.outError("CMSG_GUILD_BANK_SWAP_ITEMS: refused for player %u -- guild %u "
-                "bank state is untrusted after an unrecoverable commit; reload the guild",
-                GetPlayer()->GetGUIDLow(), GetPlayer()->GetGuildId());
-            recv_data.rfinish();
-            return;
-        }
+        DEBUG_LOG("WORLD: Rejected malformed CMSG_GUILD_BANK_SWAP_ITEMS");
+        return;
     }
-
-    ObjectGuid goGuid;
-    uint8 BankToBank;
-
-    uint8 BankTab, BankTabSlot, AutoStore;
-    uint8 PlayerSlot = NULL_SLOT;
-    uint8 PlayerBag = NULL_BAG;
-    uint8 BankTabDst, BankTabSlotDst, unk2;
-    uint8 ToChar = 1;
-    uint32 ItemEntry, unk1;
-    uint32 AutoStoreCount = 0;
-    uint32 SplitedAmount = 0;
-
-    recv_data >> goGuid >> BankToBank;
 
     uint32 GuildId = GetPlayer()->GetGuildId();
     if (!GuildId)
     {
-        recv_data.rfinish();                                // prevent additional spam at rejected packet
         return;
     }
 
     Guild* pGuild = sGuildMgr.GetGuildById(GuildId);
     if (!pGuild)
     {
-        recv_data.rfinish();                                // prevent additional spam at rejected packet
         return;
     }
 
-    if (BankToBank)
+    // Closed ahead of this opcode being registered, because the consequence is
+    // permanent. A tab purchase whose commit could not be confirmed can leave a
+    // tab in memory with no guild_bank_tab row; storing an item into it writes a
+    // guild_bank_item row with a TabId that LoadGuildBankFromDB then drops, and
+    // the item is gone for good. Refuse while the bank state is untrusted.
+    if (!pGuild->IsBankStateTrusted())
     {
-        recv_data >> BankTabDst;
-        recv_data >> BankTabSlotDst;
-        recv_data >> unk1;                                  // always 0
-        recv_data >> BankTab;
-        recv_data >> BankTabSlot;
-        recv_data >> ItemEntry;
-        recv_data >> unk2;                                  // always 0
-        recv_data >> SplitedAmount;
+        sLog.outError("CMSG_GUILD_BANK_SWAP_ITEMS: refused for player %u -- guild %u "
+            "bank state is untrusted after an unrecoverable commit; reload the guild",
+            GetPlayer()->GetGUIDLow(), GuildId);
+        return;
+    }
 
-        if (BankTabSlotDst >= GUILD_BANK_MAX_SLOTS ||
-                (BankTabDst == BankTab && BankTabSlotDst == BankTabSlot) ||
-                BankTab >= pGuild->GetPurchasedTabs() ||
-                BankTabDst >= pGuild->GetPurchasedTabs())
+    if (!GetPlayer()->GetGameObjectIfCanInteractWith(req.bankGuid, GAMEOBJECT_TYPE_GUILD_BANK))
+    {
+        return;
+    }
+
+    // Bank <-> Bank. bankTab/bankSlot is the DESTINATION on this path and
+    // srcTab/srcSlot the source -- the opposite of what the field names in a
+    // reference fork suggest. ReadGuildBankSwapItems carries the evidence.
+    //
+    // srcTab defaults to the client's own "none" value of 0xFF when the field is
+    // absent, so a bank-to-bank body that names no source fails the tab bound
+    // below rather than silently moving out of tab 0.
+    if (req.bankToBank)
+    {
+        if (req.srcTab >= pGuild->GetPurchasedTabs() ||
+                req.bankTab >= pGuild->GetPurchasedTabs() ||
+                req.srcSlot >= GUILD_BANK_MAX_SLOTS ||
+                req.bankSlot >= GUILD_BANK_MAX_SLOTS ||
+                (req.srcTab == req.bankTab && req.srcSlot == req.bankSlot))
         {
-            recv_data.rfinish();                            // prevent additional spam at rejected packet
             return;
         }
-    }
-    else
-    {
-        recv_data >> BankTab;
-        recv_data >> BankTabSlot;
-        recv_data >> ItemEntry;
-        recv_data >> AutoStore;
-        if (AutoStore)
-        {
-            recv_data >> AutoStoreCount;
-            recv_data.read_skip<uint8>();                   // ToChar (?), always and expected to be 1 (autostore only triggered in guild->ToChar)
-            recv_data.read_skip<uint32>();                  // unknown, always 0
-        }
-        else
-        {
-            recv_data >> PlayerBag;
-            recv_data >> PlayerSlot;
-            recv_data >> ToChar;
-            recv_data >> SplitedAmount;
-        }
 
-        if ((BankTabSlot >= GUILD_BANK_MAX_SLOTS && BankTabSlot != 0xFF) ||
-                BankTab >= pGuild->GetPurchasedTabs())
-        {
-            recv_data.rfinish();                            // prevent additional spam at rejected packet
-            return;
-        }
+        pGuild->SwapItems(_player, req.srcTab, req.srcSlot, req.bankTab, req.bankSlot, req.splitAmount);
+        return;
     }
 
-    if (!GetPlayer()->GetGameObjectIfCanInteractWith(goGuid, GAMEOBJECT_TYPE_GUILD_BANK))
+    // Player <-> Bank. 0xFF stays legal for the bank slot here: it is the
+    // client's "anywhere in this tab" for a deposit.
+    if (req.bankTab >= pGuild->GetPurchasedTabs() ||
+            (req.bankSlot >= GUILD_BANK_MAX_SLOTS && req.bankSlot != 0xFF))
     {
         return;
     }
 
-    // Bank <-> Bank
-    if (BankToBank)
+    // The auto-store body omits both player-side fields and the reader leaves
+    // them zero. NULL_BAG is itself 0 so the bag needs no translation, but slot 0
+    // is a real slot while NULL_SLOT is 255.
+    //
+    // Without this line an auto-store is REFUSED, not misdirected: (NULL_BAG, 0)
+    // is not an inventory position -- IsInventoryPos accepts bag 0 only with
+    // NULL_SLOT or a backpack slot index -- so it fails the guard below and the
+    // player is told the move is impossible. An earlier version of this comment
+    // said the item would land in the first backpack slot instead; it would not.
+    // The translation is still required, or auto-store never works at all.
+    //
+    // Key this on autoStore and never on the fields being absent. That absence
+    // bit is INVERTED presence: the client omits playerSlot whenever it is zero,
+    // so an ordinary deposit out of bag 19 slot 0 -- capture-000067 sequence
+    // 550753 is one, at 20 bytes -- arrives with playerSlot absent and genuinely
+    // meaning slot 0. Translating on absence would silently redirect it.
+    uint8 playerBag = req.playerBag;
+    uint8 playerSlot = req.playerSlot;
+    if (req.autoStore)
     {
-        pGuild->SwapItems(_player, BankTab, BankTabSlot, BankTabDst, BankTabSlotDst, SplitedAmount);
-        return;
+        playerBag = NULL_BAG;
+        playerSlot = NULL_SLOT;
     }
-
-    // Player <-> Bank
 
     // allow work with inventory only
-    if (!Player::IsInventoryPos(PlayerBag, PlayerSlot) && !(PlayerBag == NULL_BAG && PlayerSlot == NULL_SLOT))
+    if (!Player::IsInventoryPos(playerBag, playerSlot) &&
+            !(playerBag == NULL_BAG && playerSlot == NULL_SLOT))
     {
         _player->SendEquipError(EQUIP_ERR_NONE, NULL, NULL);
         return;
     }
 
-    // BankToChar swap or char to bank remaining
-    if (ToChar)                                             // Bank -> Char cases
+    if (req.toChar)                                         // Bank -> Char cases
     {
-        pGuild->MoveFromBankToChar(_player, BankTab, BankTabSlot, PlayerBag, PlayerSlot, SplitedAmount);
+        pGuild->MoveFromBankToChar(_player, req.bankTab, req.bankSlot, playerBag, playerSlot, req.splitAmount);
     }
     else                                                    // Char -> Bank cases
     {
-        pGuild->MoveFromCharToBank(_player, PlayerBag, PlayerSlot, BankTab, BankTabSlot, SplitedAmount);
+        pGuild->MoveFromCharToBank(_player, playerBag, playerSlot, req.bankTab, req.bankSlot, req.splitAmount);
     }
 }
 

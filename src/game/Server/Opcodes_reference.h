@@ -175,9 +175,9 @@
  *   TOTAL SMSG rows                   925
  *
  * SUBSYSTEM CONFIDENCE: high=365, low=221, medium=182, none=157
- * STATUS TOTALS (excludes 3 shared MSG aliases): ACTIVE=668, DOC=420, DORMANT=429
+ * STATUS TOTALS (excludes 3 shared MSG aliases): ACTIVE=669, DOC=420, DORMANT=428
  *   SMSG: ACTIVE=366, DOC=270, DORMANT=288
- *   CMSG: ACTIVE=302, DOC=150, DORMANT=141
+ *   CMSG: ACTIVE=303, DOC=150, DORMANT=140
  */
 
 // CAVEATS -- read before trusting any single row:
@@ -1750,7 +1750,7 @@ typedef uint16_t uint16;
  *   CMSG_SELL_ITEM                                 0x1358  ACTIVE
  *   CMSG_REQUEST_PET_INFO                          0x135B  ACTIVE
  *   CMSG_COMPLETE_MOVIE                            0x1362  DORMANT
- *   CMSG_GUILD_BANK_SWAP_ITEMS                     0x136A  DORMANT
+ *   CMSG_GUILD_BANK_SWAP_ITEMS                     0x136A  ACTIVE
  *   CMSG_PETITION_SHOW_SIGNATURES                  0x136B  ACTIVE
  *   CMSG_QUEST_PUSH_RESULT                         0x1370  ACTIVE
  *   CMSG_MAIL_TAKE_ITEM                            0x1371  ACTIVE

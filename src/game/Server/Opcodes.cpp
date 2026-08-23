@@ -1439,6 +1439,24 @@ void InitializeOpcodes()
     // despite the fork-sourced name.
     DefS(SMSG_GUILD_EVENT_BANK_TAB_MODIFIED, "SMSG_GUILD_EVENT_BANK_TAB_MODIFIED");
 
+    // Moving an item. One opcode carries four different player actions, and at
+    // 18414 they are four different bodies: 20, 21, 23 and 25 bytes are all
+    // observed at that build. Derived from writer sub_68A2FD (thunk sub_6865DF,
+    // vtable 0xD648EC), and checked against decoded corpus bodies of each of the
+    // four lengths, every one of which the reader consumes exactly.
+    //
+    // Two things the inherited reader had wrong are worth naming, because both
+    // are silent rather than fatal. The BankToBank and AutoStore flags are bits
+    // in the mask, not plain bytes. And bankTab/bankSlot is the DESTINATION of a
+    // bank-to-bank move, not its source; twelve captured bodies settle that by
+    // naming an EMPTY bank slot there while srcTab/srcSlot holds a real item.
+    // Backwards, that moves the wrong item or silently does nothing at all --
+    // it does not duplicate one, which an earlier version of this note claimed.
+    //
+    // It answers with the bank list refresh the move functions already send;
+    // there is no dedicated reply opcode.
+    DefC(CMSG_GUILD_BANK_SWAP_ITEMS, "CMSG_GUILD_BANK_SWAP_ITEMS", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankSwapItems);
+
     DefC(CMSG_GUILD_BANKER_ACTIVATE, "CMSG_GUILD_BANKER_ACTIVATE", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankerActivate);
     DefC(CMSG_GUILD_BANK_QUERY_TAB, "CMSG_GUILD_BANK_QUERY_TAB", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankQueryTab);
     DefS(SMSG_GUILD_BANK_LIST, "SMSG_GUILD_BANK_LIST");
