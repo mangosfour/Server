@@ -45,9 +45,9 @@
     #define PROJECT_REVISION_NR         "2201001"
 
     #define REALMD_DB_VERSION_NR        "22"
-    #define REALMD_DB_STRUCTURE_NR      "4"
+    #define REALMD_DB_STRUCTURE_NR      "5"
     #define REALMD_DB_CONTENT_NR        "1"
-    #define REALMD_DB_UPDATE_DESCRIPT   "Warden audit"
+    #define REALMD_DB_UPDATE_DESCRIPT   "Cata Warden identity"
 
     // Structure 2: `instance_reset`.`difficulty` changed key space, from raw client
     // DifficultyIDs to the core's internal 0-based Difficulty. The two OVERLAP -- a stale
