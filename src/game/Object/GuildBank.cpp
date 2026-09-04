@@ -1360,6 +1360,11 @@ void Guild::SwapItems(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 BankTa
 
     Item* pItemDst = GetItem(BankTabDst, BankTabSlotDst);
 
+    // Every slot the destination side actually touches. A merge is not confined
+    // to the slot the client named -- see the refresh at the end of this
+    // function -- so the branches below record what they really wrote.
+    GuildItemPosCountVec destSlots;
+
     // Rights are checked on EVERY move, not only on one that crosses tabs. Both
     // checks below used to sit behind `BankTab != BankTabDst`, which left a
     // same-tab rearrange with no permission check whatsoever -- and same-tab is
@@ -1425,6 +1430,7 @@ void Guild::SwapItems(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 BankTa
         pItemSrc->FSetState(ITEM_CHANGED);
         pItemSrc->SaveToDB();                               // not in inventory and can be save standalone
         StoreItem(BankTabDst, dest, pNewItem);
+        destSlots = dest;
 
         // Spend the allowance the check above tested. It used to be tested and
         // never spent, so a member with a single withdrawal left could relay any
@@ -1457,6 +1463,7 @@ void Guild::SwapItems(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 BankTa
 
             RemoveItem(BankTab, BankTabSlot);
             StoreItem(BankTabDst, gDest, pItemSrc);
+            destSlots = gDest;
 
             if (BankTab != BankTabDst)                      // see the split branch
             {
@@ -1514,6 +1521,7 @@ void Guild::SwapItems(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 BankTa
             RemoveItem(BankTabDst, BankTabSlotDst);
             StoreItem(BankTab, gSrc, pItemDst);
             StoreItem(BankTabDst, gDest, pItemSrc);
+            destSlots = gDest;
 
             // A cross-tab swap takes an item OUT of both tabs, and the checks
             // above already tested both allowances, so spend both. Same tab, and
@@ -1530,8 +1538,43 @@ void Guild::SwapItems(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 BankTa
             }
         }
     }
-    DisplayGuildBankContentUpdate(BankTab, BankTabSlot, BankTab == BankTabDst ? BankTabSlotDst : -1);
-    if (BankTab != BankTabDst)
+    // Refresh what actually changed, which is not always the two slots the
+    // client named. When the destination stack can merge, Guild::CanStoreItem
+    // hands _CanStoreItem_InTab the whole tab and it fills `dest` with EVERY
+    // partial stack of that entry it topped up. Broadcasting only the named
+    // destination left those other slots stale on every viewer -- items sitting
+    // in the bank but drawn as missing until something forced a full refresh.
+    // The character-to-bank paths already broadcast their whole set; this one
+    // did not.
+    //
+    // Source and destination still travel together when they share a tab, so
+    // the common same-tab move stays a single packet.
+    GuildItemPosCountVec touched = destSlots;
+    if (BankTab == BankTabDst)
+    {
+        bool alreadyListed = false;
+        for (GuildItemPosCount const& slot : touched)
+        {
+            if (slot.Slot == BankTabSlot)
+            {
+                alreadyListed = true;
+                break;
+            }
+        }
+        if (!alreadyListed)
+        {
+            touched.push_back(GuildItemPosCount(BankTabSlot, 0));
+        }
+        DisplayGuildBankContentUpdate(BankTab, touched);
+        return;
+    }
+
+    DisplayGuildBankContentUpdate(BankTab, BankTabSlot);
+    if (!touched.empty())
+    {
+        DisplayGuildBankContentUpdate(BankTabDst, touched);
+    }
+    else
     {
         DisplayGuildBankContentUpdate(BankTabDst, BankTabSlotDst);
     }
