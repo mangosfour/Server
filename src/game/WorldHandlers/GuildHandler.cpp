@@ -1600,128 +1600,146 @@ void WorldSession::HandleGuildBankSwapItems(WorldPacket& recv_data)
 {
     DEBUG_LOG("WORLD: Received (CMSG_GUILD_BANK_SWAP_ITEMS)");
 
-    // Closed ahead of this opcode being registered, because the consequence is
-    // permanent. A tab purchase whose commit could not be confirmed can leave a
-    // tab in memory with no guild_bank_tab row; storing an item into it writes a
-    // guild_bank_item row with a TabId that LoadGuildBankFromDB then drops, and
-    // the item is gone for good. Refuse while the bank state is untrusted.
-    if (Guild* untrustedGuild = sGuildMgr.GetGuildById(GetPlayer()->GetGuildId()))
+    // FOUR player actions build this one opcode, and at 18414 they are four
+    // different bodies -- 20, 21, 23 and 25 bytes are all observed at that build.
+    // The inherited code read a raw GUID first and then branched on a plain
+    // BankToBank byte; neither is where it thought, and both flags now live in
+    // the bit stream, so the shape has to come out of the reader.
+    MopCompactPackets::GuildBankSwapItems req;
+    if (!MopCompactPackets::ReadGuildBankSwapItems(recv_data, req))
     {
-        if (!untrustedGuild->IsBankStateTrusted())
-        {
-            sLog.outError("CMSG_GUILD_BANK_SWAP_ITEMS: refused for player %u -- guild %u "
-                "bank state is untrusted after an unrecoverable commit; reload the guild",
-                GetPlayer()->GetGUIDLow(), GetPlayer()->GetGuildId());
-            recv_data.rfinish();
-            return;
-        }
+        DEBUG_LOG("WORLD: Rejected malformed CMSG_GUILD_BANK_SWAP_ITEMS");
+        return;
     }
-
-    ObjectGuid goGuid;
-    uint8 BankToBank;
-
-    uint8 BankTab, BankTabSlot, AutoStore;
-    uint8 PlayerSlot = NULL_SLOT;
-    uint8 PlayerBag = NULL_BAG;
-    uint8 BankTabDst, BankTabSlotDst, unk2;
-    uint8 ToChar = 1;
-    uint32 ItemEntry, unk1;
-    uint32 AutoStoreCount = 0;
-    uint32 SplitedAmount = 0;
-
-    recv_data >> goGuid >> BankToBank;
 
     uint32 GuildId = GetPlayer()->GetGuildId();
     if (!GuildId)
     {
-        recv_data.rfinish();                                // prevent additional spam at rejected packet
         return;
     }
 
     Guild* pGuild = sGuildMgr.GetGuildById(GuildId);
     if (!pGuild)
     {
-        recv_data.rfinish();                                // prevent additional spam at rejected packet
         return;
     }
 
-    if (BankToBank)
+    // Closed ahead of this opcode being registered, because the consequence is
+    // permanent. A tab purchase whose commit could not be confirmed can leave a
+    // tab in memory with no guild_bank_tab row; storing an item into it writes a
+    // guild_bank_item row with a TabId that LoadGuildBankFromDB then drops, and
+    // the item is gone for good. Refuse while the bank state is untrusted.
+    if (!pGuild->IsBankStateTrusted())
     {
-        recv_data >> BankTabDst;
-        recv_data >> BankTabSlotDst;
-        recv_data >> unk1;                                  // always 0
-        recv_data >> BankTab;
-        recv_data >> BankTabSlot;
-        recv_data >> ItemEntry;
-        recv_data >> unk2;                                  // always 0
-        recv_data >> SplitedAmount;
+        sLog.outError("CMSG_GUILD_BANK_SWAP_ITEMS: refused for player %u -- guild %u "
+            "bank state is untrusted after an unrecoverable commit; reload the guild",
+            GetPlayer()->GetGUIDLow(), GuildId);
+        return;
+    }
 
-        if (BankTabSlotDst >= GUILD_BANK_MAX_SLOTS ||
-                (BankTabDst == BankTab && BankTabSlotDst == BankTabSlot) ||
-                BankTab >= pGuild->GetPurchasedTabs() ||
-                BankTabDst >= pGuild->GetPurchasedTabs())
+    if (!GetPlayer()->GetGameObjectIfCanInteractWith(req.bankGuid, GAMEOBJECT_TYPE_GUILD_BANK))
+    {
+        return;
+    }
+
+    // Bank <-> Bank. bankTab/bankSlot is the DESTINATION on this path and
+    // srcTab/srcSlot the source -- the opposite of what the field names in a
+    // reference fork suggest. ReadGuildBankSwapItems carries the evidence.
+    //
+    // srcTab defaults to the client's own "none" value of 0xFF when the field is
+    // absent, so a bank-to-bank body that names no source fails the tab bound
+    // below rather than silently moving out of tab 0.
+    if (req.bankToBank)
+    {
+        if (req.srcTab >= pGuild->GetPurchasedTabs() ||
+                req.bankTab >= pGuild->GetPurchasedTabs() ||
+                req.srcSlot >= GUILD_BANK_MAX_SLOTS ||
+                req.bankSlot >= GUILD_BANK_MAX_SLOTS ||
+                (req.srcTab == req.bankTab && req.srcSlot == req.bankSlot))
         {
-            recv_data.rfinish();                            // prevent additional spam at rejected packet
             return;
         }
-    }
-    else
-    {
-        recv_data >> BankTab;
-        recv_data >> BankTabSlot;
-        recv_data >> ItemEntry;
-        recv_data >> AutoStore;
-        if (AutoStore)
-        {
-            recv_data >> AutoStoreCount;
-            recv_data.read_skip<uint8>();                   // ToChar (?), always and expected to be 1 (autostore only triggered in guild->ToChar)
-            recv_data.read_skip<uint32>();                  // unknown, always 0
-        }
-        else
-        {
-            recv_data >> PlayerBag;
-            recv_data >> PlayerSlot;
-            recv_data >> ToChar;
-            recv_data >> SplitedAmount;
-        }
 
-        if ((BankTabSlot >= GUILD_BANK_MAX_SLOTS && BankTabSlot != 0xFF) ||
-                BankTab >= pGuild->GetPurchasedTabs())
+        if (!pGuild->BankSlotHoldsEntry(req.srcTab, req.srcSlot, req.srcEntry) ||
+                !pGuild->BankSlotHoldsEntry(req.bankTab, req.bankSlot, req.entryAtBankSlot))
         {
-            recv_data.rfinish();                            // prevent additional spam at rejected packet
             return;
         }
+
+        pGuild->SwapItems(_player, req.srcTab, req.srcSlot, req.bankTab, req.bankSlot, req.splitAmount);
+        return;
     }
 
-    if (!GetPlayer()->GetGameObjectIfCanInteractWith(goGuid, GAMEOBJECT_TYPE_GUILD_BANK))
+    // Player <-> Bank. 0xFF stays legal for the bank slot here: it is the
+    // client's "anywhere in this tab" for a deposit.
+    if (req.bankTab >= pGuild->GetPurchasedTabs() ||
+            (req.bankSlot >= GUILD_BANK_MAX_SLOTS && req.bankSlot != 0xFF))
     {
         return;
     }
 
-    // Bank <-> Bank
-    if (BankToBank)
+    if (!pGuild->BankSlotHoldsEntry(req.bankTab, req.bankSlot, req.entryAtBankSlot))
     {
-        pGuild->SwapItems(_player, BankTab, BankTabSlot, BankTabDst, BankTabSlotDst, SplitedAmount);
         return;
     }
 
-    // Player <-> Bank
+    // Auto-store asks for the WHOLE stack, by sending splitAmount 0 -- which
+    // MoveFromBankToChar reads as "however many are there now". So the entry
+    // check above is not sufficient on this path: if another member merges more
+    // of the SAME item into that slot while the request is in flight, the entry
+    // still matches and the stale request walks off with the larger stack.
+    //
+    // The client stamps the size it saw at +0x1C. That field really is a stack
+    // count, taken from its own bank cache: the auto-store binding sub_96F53D
+    // stores cachedRecord[3] there, and GetGuildBankItemInfo returns that same
+    // cachedRecord[3] as its itemCount. A mismatch either way means the client
+    // acted on a stack that no longer exists, so refuse and let the bank list
+    // it gets back re-sync it, rather than guessing at what it meant to take.
+    if (req.autoStore &&
+            !pGuild->BankSlotStackCountIs(req.bankTab, req.bankSlot, req.autoStoreCount))
+    {
+        return;
+    }
+
+    // The auto-store body omits both player-side fields and the reader leaves
+    // them zero. NULL_BAG is itself 0 so the bag needs no translation, but slot 0
+    // is a real slot while NULL_SLOT is 255.
+    //
+    // Without this line an auto-store is REFUSED, not misdirected: (NULL_BAG, 0)
+    // is not an inventory position -- IsInventoryPos accepts bag 0 only with
+    // NULL_SLOT or a backpack slot index -- so it fails the guard below and the
+    // player is told the move is impossible. An earlier version of this comment
+    // said the item would land in the first backpack slot instead; it would not.
+    // The translation is still required, or auto-store never works at all.
+    //
+    // Key this on autoStore and never on the fields being absent. That absence
+    // bit is INVERTED presence: the client omits playerSlot whenever it is zero,
+    // so an ordinary deposit out of bag 19 slot 0 -- capture-000067 sequence
+    // 550753 is one, at 20 bytes -- arrives with playerSlot absent and genuinely
+    // meaning slot 0. Translating on absence would silently redirect it.
+    uint8 playerBag = req.playerBag;
+    uint8 playerSlot = req.playerSlot;
+    if (req.autoStore)
+    {
+        playerBag = NULL_BAG;
+        playerSlot = NULL_SLOT;
+    }
 
     // allow work with inventory only
-    if (!Player::IsInventoryPos(PlayerBag, PlayerSlot) && !(PlayerBag == NULL_BAG && PlayerSlot == NULL_SLOT))
+    if (!Player::IsInventoryPos(playerBag, playerSlot) &&
+            !(playerBag == NULL_BAG && playerSlot == NULL_SLOT))
     {
         _player->SendEquipError(EQUIP_ERR_NONE, NULL, NULL);
         return;
     }
 
-    // BankToChar swap or char to bank remaining
-    if (ToChar)                                             // Bank -> Char cases
+    if (req.toChar)                                         // Bank -> Char cases
     {
-        pGuild->MoveFromBankToChar(_player, BankTab, BankTabSlot, PlayerBag, PlayerSlot, SplitedAmount);
+        pGuild->MoveFromBankToChar(_player, req.bankTab, req.bankSlot, playerBag, playerSlot, req.splitAmount);
     }
     else                                                    // Char -> Bank cases
     {
-        pGuild->MoveFromCharToBank(_player, PlayerBag, PlayerSlot, BankTab, BankTabSlot, SplitedAmount);
+        pGuild->MoveFromCharToBank(_player, playerBag, playerSlot, req.bankTab, req.bankSlot, req.splitAmount);
     }
 }
 
@@ -1867,15 +1885,21 @@ void WorldSession::HandleGuildBankUpdateTab(WorldPacket& recv_data)
 {
     DEBUG_LOG("WORLD: Received (CMSG_GUILD_BANK_UPDATE_TAB)");
 
+    // The inherited reader took a raw eight-byte GUID, then the tab, then two
+    // NUL-terminated strings. At 18414 the tab leads as a plain byte, the GUID
+    // is packed, both lengths live in the bit stream, and the strings are NOT
+    // NUL terminated -- so every field it read was wrong. See
+    // MopCompactPackets::ReadGuildBankUpdateTab for the derivation.
     ObjectGuid goGuid;
-    uint8 TabId;
+    uint8 TabId = 0;
     std::string Name;
     std::string IconIndex;
 
-    recv_data >> goGuid;
-    recv_data >> TabId;
-    recv_data >> Name;
-    recv_data >> IconIndex;
+    if (!MopCompactPackets::ReadGuildBankUpdateTab(recv_data, TabId, Name, IconIndex, goGuid))
+    {
+        DEBUG_LOG("WORLD: CMSG_GUILD_BANK_UPDATE_TAB body rejected");
+        return;
+    }
 
     if (Name.empty())
     {
@@ -1884,6 +1908,32 @@ void WorldSession::HandleGuildBankUpdateTab(WorldPacket& recv_data)
 
     if (IconIndex.empty())
     {
+        return;
+    }
+
+    // `guild_bank_tab`.`TabName` and `.TabIcon` are both varchar(100), in the
+    // database repository at Character/Setup/characterLoadDB.sql:101223. Refuse
+    // rather than hand the column something it would silently truncate: a
+    // truncated icon path renders as a missing texture, and whether anything is
+    // logged depends on SQL mode -- strict mode rejects the UPDATE and
+    // DatabaseMysql reports it, non-strict truncates silently.
+    //
+    // These are not equal units. The table is CHARSET=utf8, so varchar(100) holds
+    // 100 CHARACTERS -- up to 300 bytes -- while the comparison below is on bytes.
+    // The guard is therefore deliberately conservative rather than exact, which
+    // costs little because neither bound is reachable through the stock UI: it
+    // sanitises a name to 15 characters, and its icon picker sends a bare macro
+    // filename of about thirty bytes. The Lua binding itself is less restrained --
+    // SetGuildBankTabInfo accepts any non-empty icon string and its copy loop
+    // permits 256 bytes -- so the icon limb IS reachable by a modified client,
+    // which is the case this guard exists for. Only that limb can fire at all,
+    // the reader already capping the name at 64; the name limb is kept so the
+    // guard still holds if that cap is ever widened. Do not "simplify" the
+    // sanitiser's 16 to a byte count -- 16 characters is not 16 bytes.
+    if (Name.size() > 100 || IconIndex.size() > 100)
+    {
+        DEBUG_LOG("WORLD: CMSG_GUILD_BANK_UPDATE_TAB refused, name %zu / icon %zu bytes exceeds storage",
+                  Name.size(), IconIndex.size());
         return;
     }
 
@@ -1915,7 +1965,61 @@ void WorldSession::HandleGuildBankUpdateTab(WorldPacket& recv_data)
     }
 
     pGuild->SetGuildBankTabInfo(TabId, Name, IconIndex);
-    pGuild->DisplayGuildBankTabsInfo(this, TabId);
+
+    // Every online member is told, not just the actor. A tab name is shared
+    // state, and a rename only its author can see leaves everyone else reading a
+    // stale label until they reopen the bank.
+    //
+    // 0x0BF1 carries this. Two earlier versions of this comment claimed nothing
+    // confirmed that, reasoning from the absence of any capture at 18414 and from
+    // the fork-sourced name in Opcodes.h. Both were wrong, because neither asked
+    // the client. Its INBOUND parser settles it: sub_6A224B reads exactly the
+    // shape BuildGuildBankTabModified writes, and sub_96ED66 takes the result,
+    // sanitises the name through the same 16-character limiter the outbound path
+    // uses, stores both strings in the tab cache at 0x11F4140, and raises event
+    // 0x1AF. The step that binds the VALUE to that parser -- the guild SMSG
+    // dispatcher sub_68EC4C and its two tables -- is spelled out on the opcode's
+    // own line in Opcodes.h, because it is the part a re-derivation cannot guess:
+    // sub_6A224B holds no opcode literal, and the only push 0xbf1 in the image is
+    // an FMOD line number. (Not Opcodes_reference.h: its rows are generated and
+    // carry only the status overlay.) Corpus silence is not evidence of absence
+    // when the binary itself can be asked.
+    ByteBuffer tabModified;
+    if (MopGuildBankPackets::BuildGuildBankTabModified(tabModified, TabId, Name, IconIndex))
+    {
+        WorldPacket modified(SMSG_GUILD_EVENT_BANK_TAB_MODIFIED, tabModified.size());
+        modified.append(tabModified.contents(), tabModified.size());
+        pGuild->BroadcastPacket(&modified);
+    }
+    else
+    {
+        // Unreachable behind the guards above. By this point the rename is applied
+        // in memory and its UPDATE has been QUEUED -- not committed: once the world
+        // has loaded, AllowAsyncTransactions is on and Database::Execute only hands
+        // the statement to the delay thread, whose result nobody checks. So what a
+        // silent skip here would cost is the notification, not the rename: every
+        // member, the actor included, would hold the old name until they reopened
+        // the bank, with nothing in the log to explain it.
+        sLog.outError("CMSG_GUILD_BANK_UPDATE_TAB: guild %u tab %u renamed but the "
+            "event body was refused; members will hold a stale name until they reopen",
+            GuildId, uint32(TabId));
+    }
+
+    // No bank list follows. The inherited handler sent one, and an earlier
+    // version of this comment justified keeping it by claiming the event only
+    // refreshed cached metadata while the list did the repainting. That is
+    // backwards. Event 0x1AF is GUILDBANK_UPDATE_TABS, and its handler at
+    // Blizzard_GuildBankUI.lua:125 calls GuildBankFrame_SelectAvailableTab(),
+    // which calls GuildBankFrame_UpdateTabs() and GuildBankFrame_Update() on
+    // every path -- so the event repaints the frame by itself, from the tab
+    // cache sub_96ED66 has just written. BroadcastPacket includes the actor, so
+    // the renamer is repainted by the same packet as everyone else.
+    //
+    // A bank list additionally ships every slot of the tab, which a rename has
+    // not changed. There is no capture of this exchange at 18414 to say what
+    // retail sends, so the choice is between a send that is provably sufficient
+    // and one that is merely inherited; keeping the extra list would be assuming
+    // evidence rather than having it.
 }
 
 void WorldSession::HandleGuildBankLogQuery(WorldPacket& recv_data)

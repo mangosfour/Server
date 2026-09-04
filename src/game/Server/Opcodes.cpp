@@ -1418,6 +1418,45 @@ void InitializeOpcodes()
     // list, not with the money-changed packet above.
     DefC(CMSG_GUILD_BANK_BUY_TAB, "CMSG_GUILD_BANK_BUY_TAB", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankBuyTab);
 
+    // Naming a tab. The naming popup is raised by RIGHT-CLICKING a tab button:
+    // Blizzard_GuildBankUI.lua:584 gates GuildBankPopupFrame:Show() on
+    // CanEditGuildBankTabInfo(), mouseButton == "RightButton", and the tab not
+    // being the purchase slot (currentTab ~= GetNumGuildBankTabs() + 1), and that
+    // is the only place in the UI that shows the frame. Buying a tab
+    // (StaticPopup.lua:485) calls BuyGuildBankTab() and nothing else. So a bought
+    // tab stayed permanently unnamed while this was dormant -- but not because the
+    // purchase raised anything, which is what an earlier version of this comment
+    // claimed. Its inherited reader was pre-MoP in every field. Derived from writer sub_68B694
+    // (thunk sub_686A1D, vtable 0xD64874); which of its two strings is the name is
+    // fixed by the Lua binding SetGuildBankTabInfo(tab, name, iconFileName), not by
+    // the writer, which cannot distinguish them. No corpus body exists at 18414.
+    DefC(CMSG_GUILD_BANK_UPDATE_TAB, "CMSG_GUILD_BANK_UPDATE_TAB", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankUpdateTab);
+
+    // The reply to a rename, sent to every online member. Its body is derived from
+    // the client's own inbound parser sub_6A224B rather than from a capture, there
+    // being none at 18414; sub_96ED66 consumes the parsed record into the tab cache
+    // and raises event 0x1AF, which is what makes this value's meaning certain
+    // despite the fork-sourced name.
+    DefS(SMSG_GUILD_EVENT_BANK_TAB_MODIFIED, "SMSG_GUILD_EVENT_BANK_TAB_MODIFIED");
+
+    // Moving an item. One opcode carries four different player actions, and at
+    // 18414 they are four different bodies: 20, 21, 23 and 25 bytes are all
+    // observed at that build. Derived from writer sub_68A2FD (thunk sub_6865DF,
+    // vtable 0xD648EC), and checked against decoded corpus bodies of each of the
+    // four lengths, every one of which the reader consumes exactly.
+    //
+    // Two things the inherited reader had wrong are worth naming, because both
+    // are silent rather than fatal. The BankToBank and AutoStore flags are bits
+    // in the mask, not plain bytes. And bankTab/bankSlot is the DESTINATION of a
+    // bank-to-bank move, not its source; twelve captured bodies settle that by
+    // naming an EMPTY bank slot there while srcTab/srcSlot holds a real item.
+    // Backwards, that moves the wrong item or silently does nothing at all --
+    // it does not duplicate one, which an earlier version of this note claimed.
+    //
+    // It answers with the bank list refresh the move functions already send;
+    // there is no dedicated reply opcode.
+    DefC(CMSG_GUILD_BANK_SWAP_ITEMS, "CMSG_GUILD_BANK_SWAP_ITEMS", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankSwapItems);
+
     DefC(CMSG_GUILD_BANKER_ACTIVATE, "CMSG_GUILD_BANKER_ACTIVATE", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankerActivate);
     DefC(CMSG_GUILD_BANK_QUERY_TAB, "CMSG_GUILD_BANK_QUERY_TAB", STATUS_LOGGEDIN, PROCESS_THREADUNSAFE, &WorldSession::HandleGuildBankQueryTab);
     DefS(SMSG_GUILD_BANK_LIST, "SMSG_GUILD_BANK_LIST");

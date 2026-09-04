@@ -1654,8 +1654,30 @@ class Guild
         /// guild_bank_item row whose TabId no reload can match, and
         /// LoadGuildBankFromDB drops exactly those rows -- the item would be gone
         /// for good. Only a reload of the guild clears the flag.
+        /// True when the named bank slot still holds the item entry the client
+        /// said it did -- zero meaning "empty". A guild bank is shared, so a
+        /// request can arrive after another member has changed the slot under
+        /// it; applying it anyway acts on whatever is there now. Slot 0xFF is
+        /// the client's "anywhere in this tab" and names nothing to compare.
+        bool   BankSlotHoldsEntry(uint8 tabId, uint8 slotId, uint32 expectedEntry);
+
+        /// True when the named bank slot still holds the stack SIZE the client
+        /// said it did. Checking the entry alone is not enough for a request
+        /// that asks for a whole stack: the entry can match while the stack has
+        /// grown underneath it. Slot 0xFF names nothing to compare.
+        bool   BankSlotStackCountIs(uint8 tabId, uint8 slotId, uint32 expectedCount);
+
         bool   IsBankStateTrusted() const { return m_bankStateTrusted; }
         void   MarkBankStateUntrusted() { m_bankStateTrusted = false; }
+
+        /// Commits an item mutation SYNCHRONOUSLY and reports whether the
+        /// database accepted it -- CommitTransactionDirect, never the queuing
+        /// CommitTransaction, which returns true before MySQL has seen anything.
+        /// A false return means memory and the durable rows may now disagree: it
+        /// marks the bank untrusted AND quarantines the player's session, and
+        /// every caller must abandon the operation without broadcasting. See the
+        /// commentary on the definition in GuildBank.cpp.
+        bool   CommitBankMutation(Player* pl, char const* context);
         // per days
         bool   MemberItemWithdraw(uint8 TabId, uint32 LowGuid);
         uint32 GetMemberSlotWithdrawRem(uint32 LowGuid, uint8 TabId);

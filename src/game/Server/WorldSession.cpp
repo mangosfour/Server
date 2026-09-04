@@ -673,6 +673,9 @@ static bool IsEnterWorldConverted(uint16 opcode)
                                               // all 143 corpus bodies are that size, value is the new bank total
         case SMSG_GUILD_BANK_LIST:            // MopGuildBankPackets::BuildListBody, byte-exact vs capture-000601 seq 1289646
                                               // (723 bytes, fifteen present items)
+        case SMSG_GUILD_EVENT_BANK_TAB_MODIFIED: // MopGuildBankPackets::BuildGuildBankTabModified; derived from the
+                                              // client's INBOUND parser sub_6A224B, there being no corpus body
+                                              // for it -- 9-bit icon length, 7-bit name length, name, tabId, icon
         case SMSG_BINDER_CONFIRM:              // MopBindPackets::BuildBinderConfirm
         case SMSG_PLAYERBOUND:                 // MopBindPackets::BuildPlayerBound
         case SMSG_LFG_PROPOSAL_UPDATE:        // MopLfgPackets::BuildProposalUpdate, byte-exact vs capture-000044 seq 1948 and capture-000059 seq 2063424

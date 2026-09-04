@@ -1394,7 +1394,7 @@ enum OpcodesList
     SMSG_LF_GUILD_APPLICANT_LIST_UPDATED         = 0x0B71,    // 5.4.8 18414 (Wow.exe leaf; name fork tables, low confidence)
     SMSG_GUILD_MOVE_COMPLETE                     = 0x0BE8,    // 5.4.8 18414 (Wow.exe binary)
     SMSG_GUILD_MEMBERS_FOR_RECIPE                = 0x0BF0,    // 5.4.8 18414 (Wow.exe leaf; name fork tables, low confidence)
-    SMSG_GUILD_EVENT_BANK_TAB_MODIFIED           = 0x0BF1,    // 5.4.8 18414 (Wow.exe leaf; name fork tables, low confidence)
+    SMSG_GUILD_EVENT_BANK_TAB_MODIFIED           = 0x0BF1,    // 5.4.8 18414 (Wow.exe binary: sub_68EC4C idx 29 -> lookup_table_68F810[29]=22 -> jump_table_68F708[22]=0x68F667 -> sub_6A39C1 -> parser sub_6A224B -> consumer sub_96ED66 -> event 0x1AF. Routing/body/meaning binary-confirmed 2026-08-23; the LABEL is still the fork tables' -- no such string is in the client. Body and reasoning: MopGuildBankPackets::BuildGuildBankTabModified. Opcodes_reference.h's [low-conf] is the clean-room pass's, not ours to flip; superseded by this)
     SMSG_GUILD_EVENT_PLAYER_LEFT                 = 0x0BF8,    // 5.4.8 18414 (Wow.exe reader/handler; guild leave/remove UI)
     SMSG_RESEARCH_COMPLETE                       = 0x0C0E,    // 5.4.8 18414 (Wow.exe leaf; name fork tables)
     SMSG_MONEY_NOTIFY                            = 0x0C0F,    // 5.4.8 18414 (Wow.exe leaf; name fork tables)

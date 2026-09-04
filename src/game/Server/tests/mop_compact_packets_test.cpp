@@ -33,6 +33,7 @@
 #include "InstanceData.h"
 #include "Opcodes.h"
 #include "WorldPacket.h"
+#include "MopGuildBankPackets.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -1073,6 +1074,404 @@ static void test_guild_bank_buy_tab_round_trip()
         CHECK(!MopCompactPackets::ReadGuildBankBuyTab(rejected, rejectedTab, rejectedGuid));
         CHECK(rejected.rpos() == rejected.size());
         CHECK(rejectedGuid.GetRawValue() == UINT64_C(0xFFFFFFFFFFFFFFFF));
+    }
+}
+
+// CMSG_GUILD_BANK_UPDATE_TAB has no capture at build 18414, so these bodies were
+// encoded from the client's writer sub_68B694, not produced by the reader they
+// test. What they lock is the layout against transposition and regression; only
+// the writer can say the layout is right in the first place.
+//
+// The four presence patterns are chosen so that all eight GUID slots differ from
+// one another somewhere in the set, which makes every one of the 28 maskOrder
+// transpositions change at least one body -- verified by enumeration, 28/28, not
+// assumed. (The buy-tab fixture above began as a single vector, and a single
+// vector leaves 16 of the 28 undetectable, because swapping two slots that are
+// both present produces an identical body.) Vector 4 has all eight bytes present
+// so every slot's position in the byte order is exercised with a distinct value.
+static void test_guild_bank_update_tab_round_trip()
+{
+    struct Vector
+    {
+        std::vector<uint8_t> body;
+        uint8 tab;
+        uint64 guid;
+        char const* name;
+        char const* icon;
+    };
+
+    std::vector<Vector> const vectors = {
+        { { 0x03, 0x03, 0xFA, 0x04, 0x54, 0x49, 0x4E, 0x56, 0x5F, 0x4D, 0x69, 0x73,
+            0x63, 0x5F, 0x42, 0x61, 0x67, 0x5F, 0x30, 0x38, 0x23, 0x10, 0x42, 0x61,
+            0x6E, 0x6B, 0x32 },
+          3, UINT64_C(0x0000005500332211), "Bank", "INV_Misc_Bag_08" },
+
+        { { 0x01, 0x84, 0x22, 0x85, 0x49, 0x4E, 0x56, 0x5F, 0x4D, 0x69, 0x73, 0x63,
+            0x5F, 0x48, 0x65, 0x72, 0x62, 0x5F, 0x30, 0x31, 0x67, 0x23, 0x10, 0x48,
+            0x65, 0x72, 0x62, 0x73, 0x45 },
+          1, UINT64_C(0x0000660044002211), "Herbs", "INV_Misc_Herb_01" },
+
+        { { 0x00, 0x03, 0x0B, 0x83, 0x49, 0x4E, 0x56, 0x5F, 0x49, 0x6E, 0x67, 0x6F,
+            0x74, 0x5F, 0x30, 0x33, 0x10, 0x4F, 0x72, 0x65, 0x32, 0x45, 0x76 },
+          0, UINT64_C(0x0077000044330011), "Ore", "INV_Ingot_03" },
+
+        { { 0x05, 0x84, 0xBF, 0x85, 0x89, 0x54, 0x49, 0x4E, 0x56, 0x5F, 0x46, 0x61,
+            0x62, 0x72, 0x69, 0x63, 0x5F, 0x53, 0x69, 0x6C, 0x6B, 0x5F, 0x30, 0x31,
+            0x67, 0x23, 0x10, 0x43, 0x6C, 0x6F, 0x74, 0x68, 0x32, 0x45, 0x76 },
+          5, UINT64_C(0x8877665544332211), "Cloth", "INV_Fabric_Silk_01" },
+    };
+
+    for (Vector const& vector : vectors)
+    {
+        WorldPacket packet = InputPacket(CMSG_GUILD_BANK_UPDATE_TAB, vector.body);
+        uint8 tabId = 0xFF;
+        std::string name;
+        std::string icon;
+        ObjectGuid guid(UINT64_C(0xFFFFFFFFFFFFFFFF));
+        CHECK(MopCompactPackets::ReadGuildBankUpdateTab(packet, tabId, name, icon, guid));
+        CHECK(tabId == vector.tab);
+        CHECK(guid.GetRawValue() == vector.guid);
+        CHECK(name == vector.name);
+        CHECK(icon == vector.icon);
+        CHECK(packet.rpos() == packet.size());
+    }
+
+    std::vector<uint8_t> const& body = vectors[3].body;
+    std::vector<std::vector<uint8_t>> malformed;
+    for (size_t size = 0; size < body.size(); ++size)
+    {
+        malformed.emplace_back(body.begin(), body.begin() + size);
+    }
+    std::vector<uint8_t> trailing = body;
+    trailing.push_back(0x00);
+    malformed.push_back(trailing);
+
+    // A byte the mask called present but which XORs to zero.
+    std::vector<uint8_t> zeroed = body;
+    zeroed[5] = 0x01;
+    malformed.push_back(zeroed);
+
+    // An embedded NUL in either string. The client's writer takes both lengths
+    // from strlen so it cannot produce these, and downstream they stop being
+    // length-delimited, so the reader must refuse them.
+    std::vector<uint8_t> nulInName = vectors[3].body;
+    nulInName[nulInName.size() - 5] = 0x00;              // inside "Cloth"
+    malformed.push_back(nulInName);
+    std::vector<uint8_t> nulInIcon = vectors[3].body;
+    nulInIcon[10] = 0x00;                                // inside the icon path
+    malformed.push_back(nulInIcon);
+
+    // Every mask bit clear, so both lengths are zero too. This one gets PAST the
+    // size check -- 4 == 4 + 0 + 0 + 0 -- and is refused by the all-zero GUID
+    // test at the end, which is the only thing standing between a body like this
+    // and a handler holding ObjectGuid(0).
+    malformed.push_back({ 0x05, 0x00, 0x00, 0x00 });
+
+    for (std::vector<uint8_t> const& bad : malformed)
+    {
+        WorldPacket rejected = InputPacket(CMSG_GUILD_BANK_UPDATE_TAB, bad);
+        uint8 rejectedTab = 0xFF;
+        std::string rejectedName = "untouched";
+        std::string rejectedIcon = "untouched";
+        ObjectGuid rejectedGuid(UINT64_C(0xFFFFFFFFFFFFFFFF));
+        CHECK(!MopCompactPackets::ReadGuildBankUpdateTab(
+            rejected, rejectedTab, rejectedName, rejectedIcon, rejectedGuid));
+        CHECK(rejected.rpos() == rejected.size());
+        CHECK(rejectedGuid.GetRawValue() == UINT64_C(0xFFFFFFFFFFFFFFFF));
+
+        // A refused body must leave every out-param alone. Some of these are
+        // rejected only after the strings have been parsed, so this is a real
+        // constraint on the reader, not a restatement of the line above.
+        CHECK(rejectedTab == 0xFF);
+        CHECK(rejectedName == "untouched");
+        CHECK(rejectedIcon == "untouched");
+    }
+}
+
+// The reader's own 64/256-byte limits, exercised AT the boundary.
+//
+// The vectors above are real shapes but short ones -- five name bytes and
+// eighteen icon bytes at most -- and the at-limit check further down tests
+// BuildGuildBankTabModified, which is the reply BUILDER. So nothing above would
+// notice the reader's limits drifting back to 63/255. That is not a hypothetical
+// regression: this reader shipped with exactly that skew, which silently refused
+// a legitimate 64-byte rename, and the fix is one edit away from being undone.
+static std::vector<uint8_t> EncodeGuildBankUpdateTab(uint8 tabId, uint64 guid,
+    std::string const& name, std::string const& icon)
+{
+    uint8 g[8];
+    for (size_t i = 0; i < 8; ++i)
+    {
+        g[i] = uint8((guid >> (8 * i)) & 0xFF);
+    }
+
+    ByteBuffer out;
+    out << uint8(tabId);
+
+    out.WriteBit(g[5] != 0);
+    out.WriteBits(uint32(icon.size() >> 1), 8);          // 9-bit length, high 8
+    out.WriteBit(uint32(icon.size() & 1));               // then its low bit
+    static uint8 const maskTail[] = { 1, 4, 2, 7, 0, 6, 3 };
+    for (size_t i = 0; i < sizeof(maskTail); ++i)
+    {
+        out.WriteBit(g[maskTail[i]] != 0);
+    }
+    out.WriteBits(uint32(name.size()), 7);
+    out.FlushBits();                                     // 24 bits: adds nothing
+
+    static uint8 const byteOrder[] = { 7, 4, 0xFF, 5, 1, 0, 0xFE, 2, 3, 6 };
+    for (size_t i = 0; i < sizeof(byteOrder); ++i)
+    {
+        if (byteOrder[i] == 0xFF)                        // the icon sits here
+        {
+            if (!icon.empty()) { out.append(icon.data(), icon.size()); }
+        }
+        else if (byteOrder[i] == 0xFE)                   // and the name here
+        {
+            if (!name.empty()) { out.append(name.data(), name.size()); }
+        }
+        else if (g[byteOrder[i]])
+        {
+            out << uint8(g[byteOrder[i]] ^ 1);           // WriteGuidBytes obfuscation
+        }
+    }
+
+    return std::vector<uint8_t>(out.contents(), out.contents() + out.size());
+}
+
+static void test_guild_bank_update_tab_length_boundaries()
+{
+    // Self-check first, so the boundary cases below are not merely this encoder
+    // agreeing with itself: reproduce a captured-shape vector byte for byte.
+    std::vector<uint8_t> const known = {
+        0x03, 0x03, 0xFA, 0x04, 0x54, 0x49, 0x4E, 0x56, 0x5F, 0x4D, 0x69, 0x73,
+        0x63, 0x5F, 0x42, 0x61, 0x67, 0x5F, 0x30, 0x38, 0x23, 0x10, 0x42, 0x61,
+        0x6E, 0x6B, 0x32 };
+    CHECK(EncodeGuildBankUpdateTab(3, UINT64_C(0x0000005500332211), "Bank",
+        "INV_Misc_Bag_08") == known);
+
+    uint64 const guid = UINT64_C(0x0000660044002211);
+    std::string const nameAtLimit(64, 'n');
+    std::string const iconAtLimit(256, 'i');
+
+    // 64 and 256 are the client's own copy limits, so both must be ACCEPTED.
+    WorldPacket accepted = InputPacket(CMSG_GUILD_BANK_UPDATE_TAB,
+        EncodeGuildBankUpdateTab(5, guid, nameAtLimit, iconAtLimit));
+    uint8 tab = 0xFF;
+    std::string name = "untouched";
+    std::string icon = "untouched";
+    ObjectGuid parsedGuid(UINT64_C(0xFFFFFFFFFFFFFFFF));
+    CHECK(MopCompactPackets::ReadGuildBankUpdateTab(accepted, tab, name, icon, parsedGuid));
+    CHECK(tab == 5);
+    CHECK(name == nameAtLimit);
+    CHECK(icon == iconAtLimit);
+    CHECK(parsedGuid.GetRawValue() == guid);
+    CHECK(accepted.rpos() == accepted.size());
+
+    // One byte past either limit must be refused, and refused without touching a
+    // single out-param. The icon limb needs 257 bytes, which is also the only
+    // case here that spends the ninth length bit.
+    std::vector<std::vector<uint8_t>> const overLimit = {
+        EncodeGuildBankUpdateTab(5, guid, std::string(65, 'n'), "Icon"),
+        EncodeGuildBankUpdateTab(5, guid, "Bank", std::string(257, 'i')),
+    };
+
+    for (size_t i = 0; i < overLimit.size(); ++i)
+    {
+        WorldPacket rejected = InputPacket(CMSG_GUILD_BANK_UPDATE_TAB, overLimit[i]);
+        uint8 rejectedTab = 0xFF;
+        std::string rejectedName = "untouched";
+        std::string rejectedIcon = "untouched";
+        ObjectGuid rejectedGuid(UINT64_C(0xFFFFFFFFFFFFFFFF));
+        CHECK(!MopCompactPackets::ReadGuildBankUpdateTab(
+            rejected, rejectedTab, rejectedName, rejectedIcon, rejectedGuid));
+        CHECK(rejected.rpos() == rejected.size());
+        CHECK(rejectedTab == 0xFF);
+        CHECK(rejectedName == "untouched");
+        CHECK(rejectedIcon == "untouched");
+        CHECK(rejectedGuid.GetRawValue() == UINT64_C(0xFFFFFFFFFFFFFFFF));
+    }
+}
+
+static void test_guild_bank_tab_modified_body()
+{
+    ByteBuffer body;
+    CHECK(MopGuildBankPackets::BuildGuildBankTabModified(body, 3, "Bank", "INV_Misc_Bag_08"));
+
+    // icon length 15 in 9 bits = 0 0000 1111, name length 4 in 7 bits = 000 0100.
+    // MSB-first that is 00000111 10000100 -> 0x07 0x84, and 9 + 7 is a whole
+    // number of bytes so the flush contributes nothing.
+    std::vector<uint8_t> expected = { 0x07, 0x84 };
+    for (char c : std::string("Bank")) { expected.push_back(uint8_t(c)); }
+    expected.push_back(0x03); expected.push_back(0x00);
+    expected.push_back(0x00); expected.push_back(0x00);
+    for (char c : std::string("INV_Misc_Bag_08")) { expected.push_back(uint8_t(c)); }
+
+    CHECK(body.size() == expected.size());
+    for (size_t index = 0; index < expected.size(); ++index)
+    {
+        CHECK(body.contents()[index] == expected[index]);
+    }
+
+    // Refused rather than truncated, and the buffer is checked as well as the
+    // return: "refused" is a claim about what was written, so asserting only the
+    // false return would leave the interesting half untested. The tab bound is
+    // load-bearing on the receiving side -- the client's consumer sub_96ED66 does
+    // NOT range-check the tab before indexing its 8-entry cache at 0x11F4140 with
+    // stride 0x2148, so this guard is what stops a wild write in every client that
+    // receives the event.
+    ByteBuffer rejected;
+    CHECK(!MopGuildBankPackets::BuildGuildBankTabModified(rejected, 8, "Bank", "Icon"));
+    CHECK(!MopGuildBankPackets::BuildGuildBankTabModified(
+        rejected, 0, std::string(MopGuildBankPackets::MAX_TAB_NAME_BYTES + 1, 'x'), "Icon"));
+    CHECK(!MopGuildBankPackets::BuildGuildBankTabModified(
+        rejected, 0, "Bank", std::string(MopGuildBankPackets::MAX_TAB_ICON_BYTES + 1, 'x')));
+    CHECK(rejected.size() == 0);
+
+    // The client's copy limits exactly, one byte below the refusals above.
+    ByteBuffer atLimit;
+    CHECK(MopGuildBankPackets::BuildGuildBankTabModified(
+        atLimit, 7, std::string(MopGuildBankPackets::MAX_TAB_NAME_BYTES, 'n'),
+        std::string(MopGuildBankPackets::MAX_TAB_ICON_BYTES, 'i')));
+}
+
+// CMSG_GUILD_BANK_SWAP_ITEMS, unlike its siblings, has real wire evidence: 125
+// PACKETS at build 18414, spread across many captures, under catalogue generation
+// 2BE10C89...88752. Every body below is a genuine retail packet rather than a
+// synthetic one, which makes this a stronger check than the update-tab fixture.
+//
+// It is not an unconditional check on the bit order, though, and an earlier
+// version of this comment claimed it was. Exact-size validation only catches a
+// mistake that CHANGES the size: permuting the GUID mask bits preserves their
+// popcount, and transposing two optional fields of equal width preserves the
+// total. What these vectors do pin down is every field's VALUE, which is the
+// part that matters here.
+//
+// The seven cover all four producer shapes and the whole observed size range
+// (20-25 bytes), including two bank-to-bank moves into an EMPTY destination. Those
+// two are the ones that prove which pair is the source: bankTab/bankSlot names a
+// slot holding nothing while srcTab/srcSlot holds a real item, and an empty slot
+// cannot be a source. Ordinary swaps are symmetric and cannot distinguish them.
+static void test_guild_bank_swap_items_real_captures()
+{
+    struct Vector
+    {
+        std::vector<uint8_t> body;
+        uint64 guid;
+        uint32 splitAmount;
+        uint32 entryAtBankSlot;
+        uint32 srcEntry;
+        uint32 autoStoreCount;
+        uint8  bankTab;
+        uint8  bankSlot;
+        uint8  toChar;
+        uint8  playerBag;
+        uint8  playerSlot;
+        uint8  srcTab;
+        uint8  srcSlot;
+        bool   autoStore;
+        bool   bankToBank;
+    };
+
+    std::vector<Vector> const vectors = {
+        // capture-000067 seq 550753 -- P3 deposit, player -> bank
+        { { 0x00, 0x00, 0x00, 0x00, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xE7, 0x37, 0x12, 0x43, 0x70, 0x11, 0x06, 0xF0, 0x13 },
+          UINT64_C(0xF113427100000710), 0, 0, 0, 0,
+          2, 97, 0, 19, 0, 255, 0,
+          false, false },
+
+        // capture-000033 seq 14266 -- P1 auto-store, bank -> player
+        { { 0x00, 0x00, 0x00, 0x00, 0x27, 0x01, 0x36, 0x29, 0x01, 0x00, 0x03, 0xFF, 0x36, 0x12, 0x43, 0x70, 0x11, 0x06, 0xF0, 0x05, 0x00, 0x00, 0x00 },
+          UINT64_C(0xF113427100000710), 0, 76086, 0, 5,
+          3, 39, 1, 0, 0, 255, 0,
+          true, false },
+
+        // capture-000059 seq 1695242 -- P2 bank -> player, named bag slot
+        { { 0x01, 0x00, 0x00, 0x00, 0x08, 0x01, 0x08, 0x56, 0x01, 0x00, 0x02, 0xE7, 0x33, 0x12, 0x43, 0x70, 0x11, 0x06, 0xF0, 0x15, 0x02 },
+          UINT64_C(0xF113427100000710), 1, 87560, 0, 0,
+          2, 8, 1, 21, 2, 255, 0,
+          false, false },
+
+        // capture-000112 seq 465086 -- P4 bank -> bank, source and destination equal
+        { { 0x03, 0x00, 0x00, 0x00, 0x36, 0x00, 0x89, 0x2B, 0x01, 0x00, 0x01, 0xB4, 0x77, 0x12, 0x43, 0x6F, 0xE1, 0x07, 0xF0, 0x89, 0x2B, 0x01, 0x00, 0x36, 0x01 },
+          UINT64_C(0xF113426E000006E0), 3, 76681, 76681, 0,
+          1, 54, 0, 0, 0, 1, 54,
+          false, true },
+
+        // capture-000067 seq 551446 -- P4 bank -> bank swap of two different items
+        { { 0x00, 0x00, 0x00, 0x00, 0x53, 0x00, 0x3A, 0x29, 0x01, 0x00, 0x02, 0xB4, 0x77, 0x12, 0x43, 0x70, 0x11, 0x06, 0xF0, 0x3C, 0x29, 0x01, 0x00, 0x50, 0x02 },
+          UINT64_C(0xF113427100000710), 0, 76090, 76092, 0,
+          2, 83, 0, 0, 0, 2, 80,
+          false, true },
+
+        // capture-000188 seq 6613 -- P4 into an EMPTY destination: proves the direction
+        { { 0x00, 0x00, 0x00, 0x00, 0x5C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xB4, 0x77, 0x12, 0x43, 0x71, 0xE7, 0x07, 0xF0, 0xE3, 0x23, 0x01, 0x00, 0x03, 0x02 },
+          UINT64_C(0xF1134270000006E6), 0, 0, 74723, 0,
+          2, 92, 0, 0, 0, 2, 3,
+          false, true },
+
+        // capture-000192 seq 18440 -- P4 into an EMPTY destination, second instance
+        { { 0x00, 0x00, 0x00, 0x00, 0x57, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xB4, 0x77, 0x12, 0x26, 0x0B, 0x23, 0x05, 0xF0, 0x7C, 0x2B, 0x01, 0x00, 0x06, 0x01 },
+          UINT64_C(0xF113270A00000422), 0, 0, 76668, 0,
+          1, 87, 0, 0, 0, 1, 6,
+          false, true },
+    };
+
+    for (Vector const& vector : vectors)
+    {
+        WorldPacket packet = InputPacket(CMSG_GUILD_BANK_SWAP_ITEMS, vector.body);
+        MopCompactPackets::GuildBankSwapItems parsed;
+        CHECK(MopCompactPackets::ReadGuildBankSwapItems(packet, parsed));
+        CHECK(parsed.bankGuid.GetRawValue() == vector.guid);
+        CHECK(parsed.splitAmount == vector.splitAmount);
+        CHECK(parsed.entryAtBankSlot == vector.entryAtBankSlot);
+        CHECK(parsed.srcEntry == vector.srcEntry);
+        CHECK(parsed.autoStoreCount == vector.autoStoreCount);
+        CHECK(parsed.bankTab == vector.bankTab);
+        CHECK(parsed.bankSlot == vector.bankSlot);
+        CHECK(parsed.toChar == vector.toChar);
+        CHECK(parsed.playerBag == vector.playerBag);
+        CHECK(parsed.playerSlot == vector.playerSlot);
+        CHECK(parsed.srcTab == vector.srcTab);
+        CHECK(parsed.srcSlot == vector.srcSlot);
+        CHECK(parsed.autoStore == vector.autoStore);
+        CHECK(parsed.bankToBank == vector.bankToBank);
+        CHECK(packet.rpos() == packet.size());
+    }
+
+    // The direction claim, asserted directly rather than left implicit in the
+    // table above: in both empty-destination captures the bank-side pair is empty
+    // and the source pair is not.
+    for (size_t index = 5; index <= 6; ++index)
+    {
+        CHECK(vectors[index].bankToBank);
+        CHECK(vectors[index].entryAtBankSlot == 0);
+        CHECK(vectors[index].srcEntry != 0);
+    }
+
+    std::vector<uint8_t> const& body = vectors[6].body;
+    std::vector<std::vector<uint8_t>> malformed;
+    for (size_t size = 0; size < body.size(); ++size)
+    {
+        malformed.emplace_back(body.begin(), body.begin() + size);
+    }
+    std::vector<uint8_t> trailing = body;
+    trailing.push_back(0x00);
+    malformed.push_back(trailing);
+
+    // A GUID byte the mask called present but which XORs to zero.
+    std::vector<uint8_t> zeroed = body;
+    zeroed[13] = 0x01;
+    malformed.push_back(zeroed);
+
+    for (std::vector<uint8_t> const& bad : malformed)
+    {
+        WorldPacket rejected = InputPacket(CMSG_GUILD_BANK_SWAP_ITEMS, bad);
+        MopCompactPackets::GuildBankSwapItems parsed;
+        parsed.bankGuid = ObjectGuid(UINT64_C(0xFFFFFFFFFFFFFFFF));
+        CHECK(!MopCompactPackets::ReadGuildBankSwapItems(rejected, parsed));
+        CHECK(rejected.rpos() == rejected.size());
+        CHECK(parsed.bankGuid.GetRawValue() == UINT64_C(0xFFFFFFFFFFFFFFFF));
     }
 }
 
@@ -2334,6 +2733,10 @@ int main(int /*argc*/, char** /*argv*/)
     test_pre_resurrect_packet();
     test_guild_bank_deposit_money_matches_capture();
     test_guild_bank_buy_tab_round_trip();
+    test_guild_bank_update_tab_round_trip();
+    test_guild_bank_update_tab_length_boundaries();
+    test_guild_bank_tab_modified_body();
+    test_guild_bank_swap_items_real_captures();
     test_combo_points_packet();
     test_instance_reset_result_bodies();
 
