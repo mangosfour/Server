@@ -1683,6 +1683,24 @@ void WorldSession::HandleGuildBankSwapItems(WorldPacket& recv_data)
         return;
     }
 
+    // Auto-store asks for the WHOLE stack, by sending splitAmount 0 -- which
+    // MoveFromBankToChar reads as "however many are there now". So the entry
+    // check above is not sufficient on this path: if another member merges more
+    // of the SAME item into that slot while the request is in flight, the entry
+    // still matches and the stale request walks off with the larger stack.
+    //
+    // The client stamps the size it saw at +0x1C. That field really is a stack
+    // count, taken from its own bank cache: the auto-store binding sub_96F53D
+    // stores cachedRecord[3] there, and GetGuildBankItemInfo returns that same
+    // cachedRecord[3] as its itemCount. A mismatch either way means the client
+    // acted on a stack that no longer exists, so refuse and let the bank list
+    // it gets back re-sync it, rather than guessing at what it meant to take.
+    if (req.autoStore &&
+            !pGuild->BankSlotStackCountIs(req.bankTab, req.bankSlot, req.autoStoreCount))
+    {
+        return;
+    }
+
     // The auto-store body omits both player-side fields and the reader leaves
     // them zero. NULL_BAG is itself 0 so the bag needs no translation, but slot 0
     // is a real slot while NULL_SLOT is 255.

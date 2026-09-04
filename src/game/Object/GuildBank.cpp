@@ -293,6 +293,17 @@ bool Guild::BankSlotHoldsEntry(uint8 tabId, uint8 slotId, uint32 expectedEntry)
     return uint32(item ? item->GetEntry() : 0) == expectedEntry;
 }
 
+bool Guild::BankSlotStackCountIs(uint8 tabId, uint8 slotId, uint32 expectedCount)
+{
+    if (slotId == 0xFF)                                     // "anywhere in this tab"
+    {
+        return true;
+    }
+
+    Item const* item = GetItem(tabId, slotId);
+    return uint32(item ? item->GetCount() : 0) == expectedCount;
+}
+
 Item* Guild::GetItem(uint8 TabId, uint8 SlotId)
 {
     if (TabId >= GetPurchasedTabs() || SlotId >= GUILD_BANK_MAX_SLOTS)

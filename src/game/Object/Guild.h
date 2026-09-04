@@ -1661,6 +1661,12 @@ class Guild
         /// the client's "anywhere in this tab" and names nothing to compare.
         bool   BankSlotHoldsEntry(uint8 tabId, uint8 slotId, uint32 expectedEntry);
 
+        /// True when the named bank slot still holds the stack SIZE the client
+        /// said it did. Checking the entry alone is not enough for a request
+        /// that asks for a whole stack: the entry can match while the stack has
+        /// grown underneath it. Slot 0xFF names nothing to compare.
+        bool   BankSlotStackCountIs(uint8 tabId, uint8 slotId, uint32 expectedCount);
+
         bool   IsBankStateTrusted() const { return m_bankStateTrusted; }
         void   MarkBankStateUntrusted() { m_bankStateTrusted = false; }
 
