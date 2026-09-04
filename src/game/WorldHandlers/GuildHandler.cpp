@@ -1660,6 +1660,12 @@ void WorldSession::HandleGuildBankSwapItems(WorldPacket& recv_data)
             return;
         }
 
+        if (!pGuild->BankSlotHoldsEntry(req.srcTab, req.srcSlot, req.srcEntry) ||
+                !pGuild->BankSlotHoldsEntry(req.bankTab, req.bankSlot, req.entryAtBankSlot))
+        {
+            return;
+        }
+
         pGuild->SwapItems(_player, req.srcTab, req.srcSlot, req.bankTab, req.bankSlot, req.splitAmount);
         return;
     }
@@ -1668,6 +1674,11 @@ void WorldSession::HandleGuildBankSwapItems(WorldPacket& recv_data)
     // client's "anywhere in this tab" for a deposit.
     if (req.bankTab >= pGuild->GetPurchasedTabs() ||
             (req.bankSlot >= GUILD_BANK_MAX_SLOTS && req.bankSlot != 0xFF))
+    {
+        return;
+    }
+
+    if (!pGuild->BankSlotHoldsEntry(req.bankTab, req.bankSlot, req.entryAtBankSlot))
     {
         return;
     }

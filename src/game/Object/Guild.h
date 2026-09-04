@@ -1654,6 +1654,13 @@ class Guild
         /// guild_bank_item row whose TabId no reload can match, and
         /// LoadGuildBankFromDB drops exactly those rows -- the item would be gone
         /// for good. Only a reload of the guild clears the flag.
+        /// True when the named bank slot still holds the item entry the client
+        /// said it did -- zero meaning "empty". A guild bank is shared, so a
+        /// request can arrive after another member has changed the slot under
+        /// it; applying it anyway acts on whatever is there now. Slot 0xFF is
+        /// the client's "anywhere in this tab" and names nothing to compare.
+        bool   BankSlotHoldsEntry(uint8 tabId, uint8 slotId, uint32 expectedEntry);
+
         bool   IsBankStateTrusted() const { return m_bankStateTrusted; }
         void   MarkBankStateUntrusted() { m_bankStateTrusted = false; }
 

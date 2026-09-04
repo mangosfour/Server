@@ -282,6 +282,17 @@ bool Guild::CommitBankMutation(Player* pl, char const* context)
     return false;
 }
 
+bool Guild::BankSlotHoldsEntry(uint8 tabId, uint8 slotId, uint32 expectedEntry)
+{
+    if (slotId == 0xFF)                                     // "anywhere in this tab"
+    {
+        return true;
+    }
+
+    Item const* item = GetItem(tabId, slotId);
+    return uint32(item ? item->GetEntry() : 0) == expectedEntry;
+}
+
 Item* Guild::GetItem(uint8 TabId, uint8 SlotId)
 {
     if (TabId >= GetPurchasedTabs() || SlotId >= GUILD_BANK_MAX_SLOTS)
@@ -1393,7 +1404,12 @@ void Guild::SwapItems(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 BankTa
             LogBankEvent(GUILD_BANK_LOG_MOVE_ITEM, BankTab, pl->GetGUIDLow(), pItemSrc->GetEntry(), SplitedAmount, BankTabDst);
         }
 
-        pl->ItemRemovedQuestCheck(pItemSrc->GetEntry(), SplitedAmount);
+        // No ItemRemovedQuestCheck here. Both slots are in the guild bank, so
+        // nothing left the player's inventory -- but that call walks the quest
+        // log and decrements every DELIVER objective matching the entry, so
+        // splitting a bank stack of a quest item used to eat the player's own
+        // progress and could take a completed quest back to incomplete. The
+        // player never held these items; only the bank's arrangement changed.
         pItemSrc->SetCount(pItemSrc->GetCount() - SplitedAmount);
         pItemSrc->FSetState(ITEM_CHANGED);
         pItemSrc->SaveToDB();                               // not in inventory and can be save standalone
