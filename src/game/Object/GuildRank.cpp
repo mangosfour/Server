@@ -25,6 +25,7 @@
 
 #include "Guild.h"
 #include "Database/DatabaseEnv.h"
+#include "ObjectMgr.h"
 #include "Log.h"
 
 /**
